@@ -11,6 +11,7 @@ import { enforceNameByDetected, extFromName, detectFileType, lookupMimeByPath } 
 import { resolveSafe, sanitizeRelPath, sanitizeSegment } from "./utils/path";
 import { baseSecurityHeaders, sendHtml, sendJson, sendText, wantsJson } from "./http/http";
 import { renderHtmlList, renderDisks } from "../web/templates";
+import { getFsStats } from "./utils/disk";
 import { randomSuffixHex } from "./utils/random";
 
 export async function startServer() {
@@ -31,12 +32,13 @@ export async function startServer() {
 
       // GET /disks => list configured disks
       if (req.method === "GET" && pathname === "/disks") {
-        const disks = DISKS.map(d=>{
+        const disks = await Promise.all(DISKS.map(async d=>{
           const idx = getIndex(d.name);
           const size = idx?.dirs['']?.size;
           const builtAt = idx?.builtAt;
-          return { name:d.name, path:d.path, size, builtAt };
-        });
+          const fsStats = await getFsStats(d.path);
+          return { name:d.name, path:d.path, size, builtAt, total: fsStats?.total, used: fsStats?.used, available: fsStats?.available, usedPercent: fsStats?.usedPercent };
+        }));
         if (wantsJson(req, url)) return sendJson({ ok:true, cwd:"", dirs:[], files:[], breadcrumbs:[] } as any, 200);
         const html = await renderDisks(url.origin, disks);
         return sendHtml(html);

@@ -99,6 +99,8 @@ export async function renderHtmlList(
     '<svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h5a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H3ZM15 4.75a.75.75 0 0 0-1.28-.53l-2 2a.75.75 0 0 0-.22.53v2.5c0 .199.079.39.22.53l2 2a.75.75 0 0 0 1.28-.53v-6.5Z"/></svg>';
   const PHOTO_SVG =
     '<svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 8.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"/><path fill-rule="evenodd" d="M2.5 5A1.5 1.5 0 0 0 1 6.5v5A1.5 1.5 0 0 0 2.5 13h11a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 13.5 5h-.879a1.5 1.5 0 0 1-1.06-.44l-1.122-1.12A1.5 1.5 0 0 0 9.38 3H6.62a1.5 1.5 0 0 0-1.06.44L4.439 4.56A1.5 1.5 0 0 1 3.38 5H2.5ZM11 8.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" clip-rule="evenodd"/></svg>';
+  const AUDIO_SVG =
+    '<svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M14 1.75a.75.75 0 0 0-.89-.737l-7.502 1.43a.75.75 0 0 0-.61.736v2.5c0 .018 0 .036.002.054V9.73a1 1 0 0 1-.813.983l-.58.11a1.978 1.978 0 0 0 .741 3.886l.603-.115c.9-.171 1.55-.957 1.55-1.873v-1.543l-.001-.043V6.3l6-1.143v3.146a1 1 0 0 1-.813.982l-.584.111a1.978 1.978 0 0 0 .74 3.886l.326-.062A2.252 2.252 0 0 0 14 11.007V1.75Z"/></svg>';
 
   const bc = breadcrumbs
     .map((c, i) => {
@@ -141,6 +143,8 @@ export async function renderHtmlList(
         ? PHOTO_SVG
         : (f as any).mediaKind === "video"
         ? VIDEO_SVG
+        : (f as any).mediaKind === "audio"
+        ? AUDIO_SVG
         : FILE_SVG;
       const downloadAttr =
         (f as any).mediaKind === "image" || (f as any).mediaKind === "video"
@@ -160,7 +164,8 @@ export async function renderHtmlList(
     LIST_TEMPLATE_CACHE = await Bun.file("web/list.html").text();
   }
 
-  const allRows = (dirItems + fileItems).trim();
+  const gap = (dirItems && fileItems) ? '<li class="gap" aria-hidden="true"></li>' : '';
+  const allRows = (dirItems + gap + fileItems).trim();
   const listSection = allRows
     ? `<ul class="list">${allRows}</ul>`
     : `<div class="empty">${EMPTY_SVG}<div class="empty-text">This folder is empty</div></div>`;
@@ -176,12 +181,15 @@ export async function renderHtmlList(
     .replaceAll("{{BASE}}", base);
 }
 
-export async function renderDisks(base: string, disks: Array<{ name: string; path: string; size?: number; builtAt?: number }>) {
+export async function renderDisks(base: string, disks: Array<{ name: string; path: string; size?: number; builtAt?: number; total?: number; used?: number; available?: number; usedPercent?: number }>) {
   if (!DISKS_TEMPLATE_CACHE) DISKS_TEMPLATE_CACHE = await Bun.file("web/disks.html").text();
   const items = disks.map(d => {
-    const size = d.size != null ? ` · ${prettyBytes(d.size)}` : '';
-    const built = d.builtAt ? ` · indexed ${new Date(d.builtAt).toLocaleString()}` : '';
-    return `<li><a class="link name" href="${base}/browse/${encodeRelForUrl(d.name)}">${escapeHtml(d.name)}</a><span class="path">${escapeHtml(d.path)}</span><span class="meta">${escapeHtml((size+built).trim())}</span></li>`;
+    const indexed = d.size != null ? `indexed ${prettyBytes(d.size)}` : '';
+    const built = d.builtAt ? ` • ${new Date(d.builtAt).toLocaleString()}` : '';
+    const fs = (d.total && d.used != null && d.available != null)
+      ? ` • FS ${prettyBytes(d.used)} used / ${prettyBytes(d.total)} total • ${prettyBytes(d.available)} free${d.usedPercent!=null?` (${d.usedPercent}%)`:''}`
+      : '';
+    return `<li><a class="link name" href="${base}/browse/${encodeRelForUrl(d.name)}">${escapeHtml(d.name)}</a><span class="path">${escapeHtml(d.path)}</span><span class="meta">${escapeHtml([indexed, built, fs].filter(Boolean).join(''))}</span></li>`;
   }).join("\n");
   return DISKS_TEMPLATE_CACHE.replace("{{DISK_ITEMS}}", items);
 }
