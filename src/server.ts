@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { STORAGE, MAX_UPLOAD_BYTES, STRICT_MIME } from "./config";
 import { listEntries } from "./listing";
-import { startIndexingWorkers } from "./workers/indexer";
+import { startIndexingWorkers, isBuilding } from "./workers/indexer";
 import { getIndex } from "./index/store";
 import { DISKS } from "./config";
 import { makeBreadcrumbs } from "./utils/breadcrumbs";
@@ -28,6 +28,54 @@ export async function startServer() {
       // Root listing => redirect to default disk
       if (req.method === "GET" && (pathname === "/" || pathname === "")) {
         return Response.redirect(url.origin + "/browse/storage", 302);
+      }
+
+      // GET /api/index/<disk>[/<rel>] -> fast JSON from index only
+      if (req.method === "GET" && pathname.startsWith("/api/index/")) {
+        const rest = pathname.slice("/api/index/".length);
+        const segs = rest.split('/').filter(Boolean).map(decodeURIComponent);
+        const disk = segs.shift() || 'storage';
+        const relDecoded = segs.join('/');
+        try {
+          const idx = getIndex(disk);
+          if (!idx) return sendJson({ ok: false, error: "no index" }, 503);
+          if (idx.dirs[relDecoded] === undefined) return sendJson({ ok: false, error: "not found" }, 404);
+          const dir = idx.dirs[relDecoded] || { childrenDirs: [], childrenFiles: [] } as any;
+          const dirs = dir.childrenDirs.map((name: string) => {
+            const childRel = relDecoded ? `${relDecoded}/${name}` : name;
+            const d = idx.dirs[childRel];
+            return { name, rel: childRel, mtime: new Date((d?.mtime||0)).toISOString(), size: d?.size };
+          });
+          const files = dir.childrenFiles.map((name: string) => {
+            const childRel = relDecoded ? `${relDecoded}/${name}` : name;
+            const f = idx.files[childRel]!;
+            return { name, rel: childRel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: f.isLink, mediaKind: f.mediaKind, fileKind: (f as any).fileKind, isExec: (f as any).isExec } as any;
+          });
+          const payload = { ok: true, cwd: relDecoded, dirs, files, breadcrumbs: makeBreadcrumbs(relDecoded) } as any;
+          return sendJson(payload);
+        } catch (e:any) {
+          return sendJson({ ok: false, error: String(e?.message||e) }, 500);
+        }
+      }
+
+      // GET /api/lookup/<disk>/<rel> -> fast metadata for a file from index
+      if (req.method === "GET" && pathname.startsWith("/api/lookup/")) {
+        const rest = pathname.slice("/api/lookup/".length);
+        const segs = rest.split('/').filter(Boolean).map(decodeURIComponent);
+        const disk = segs.shift() || 'storage';
+        const relDecoded = segs.join('/');
+        const idx = getIndex(disk);
+        if (!idx) return sendJson({ ok: false, error: "no index" }, 503);
+        const f = idx.files[relDecoded];
+        if (!f) return sendJson({ ok: false, error: "not found" }, 404);
+        return sendJson({ ok: true, file: { name: f.name, rel: f.rel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: f.isLink, mediaKind: f.mediaKind, fileKind: (f as any).fileKind, isExec: (f as any).isExec } } as any);
+      }
+
+      // GET /api/index/state/<disk> -> building status + counts
+      if (req.method === "GET" && pathname.startsWith("/api/index/state/")) {
+        const disk = decodeURIComponent(pathname.slice("/api/index/state/".length)) || 'storage';
+        const idx = getIndex(disk);
+        return sendJson({ ok: true, building: isBuilding(disk), files: idx ? Object.keys(idx.files).length : 0, dirs: idx ? Object.keys(idx.dirs).length : 0, builtAt: idx?.builtAt } as any);
       }
 
       // GET /disks => list configured disks

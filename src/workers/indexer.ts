@@ -6,6 +6,9 @@ import { loadIndex, saveIndex, setIndex } from "../index/store";
 import { log } from "../utils/log";
 import { lookupMimeByPath } from "../utils/mime";
 
+const buildingState = new Map<string, boolean>();
+export function isBuilding(disk: string) { return !!buildingState.get(disk); }
+
 async function sha1Hex(input: string): Promise<string> {
   const enc = new TextEncoder().encode(input);
   const hash = await crypto.subtle.digest("SHA-1", enc);
@@ -13,6 +16,7 @@ async function sha1Hex(input: string): Promise<string> {
 }
 
 async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
+  buildingState.set(disk.name, true);
   const root = disk.path;
   const files: Record<string, IndexedFile> = {};
   const dirs: Record<string, IndexedDir> = {};
@@ -100,6 +104,7 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
   // final snapshot
   setIndex(disk.name, index);
   await saveIndex(index);
+  buildingState.set(disk.name, false);
   return index;
 }
 
@@ -117,18 +122,17 @@ async function indexAll() {
 function debounce(fn: () => void, ms: number) { let t: any; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
 
 async function startWatchers() {
-  const building = new Map<string, boolean>();
   for (const d of DISKS) {
     try {
       const abs = d.path;
       const run = debounce(async () => {
         log("watcher", "fs", "change detected, reindex", { disk: d.name });
-        if (building.get(d.name)) { log("watcher", "fs", "skip, build in progress", { disk: d.name }); return; }
-        building.set(d.name, true);
+        if (buildingState.get(d.name)) { log("watcher", "fs", "skip, build in progress", { disk: d.name }); return; }
+        buildingState.set(d.name, true);
         try {
           const idx = await buildForDisk(d);
           log("indexer", "build", "built index", { disk: d.name, files: Object.keys(idx.files).length, dirs: Object.keys(idx.dirs).length });
-        } finally { building.set(d.name, false); }
+        } finally { buildingState.set(d.name, false); }
       }, 1000);
       // Recursive on macOS should work; if not, we fallback to noop
       (fs as any).watch(abs, { recursive: true }, (_event, _file) => run());

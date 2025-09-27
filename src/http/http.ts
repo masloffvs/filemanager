@@ -18,6 +18,7 @@ export function htmlSecurityHeaders() {
       [
         "default-src 'none'",
         "style-src 'unsafe-inline' https://fonts.googleapis.com",
+        "script-src 'self'",
         "font-src 'self' https://fonts.gstatic.com",
         "img-src 'self' data:",
         "frame-ancestors 'none'",

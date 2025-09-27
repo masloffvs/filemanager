@@ -5,6 +5,7 @@ import { makeBreadcrumbs } from "./utils/breadcrumbs";
 import { resolveSafe } from "./utils/path";
 import { getDirSize } from "./utils/dirsize";
 import { lookupMimeByPath } from "./utils/mime";
+import { classifyFileKind } from "./utils/kind";
 
 export async function listEntries(rel: string) {
   const { abs, rel: cleaned } = resolveSafe(rel);
@@ -30,7 +31,8 @@ export async function listEntries(rel: string) {
         if (mime.startsWith("image/")) mediaKind = "image";
         else if (mime.startsWith("video/")) mediaKind = "video";
         else if (mime.startsWith("audio/")) mediaKind = "audio";
-        files.push({ name: base, rel: entryRel, size: (st as any).size ?? 0, mtime: new Date(st.mtimeMs).toISOString(), isLink, mediaKind });
+        const { kind: fileKind, isExec } = classifyFileKind(p, (st as any).mode ?? 0);
+        files.push({ name: base, rel: entryRel, size: (st as any).size ?? 0, mtime: new Date(st.mtimeMs).toISOString(), isLink, mediaKind, fileKind, isExec });
       }
     })
   );

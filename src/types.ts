@@ -5,6 +5,8 @@ export interface FileInfo {
   mtime: string;
   isLink?: boolean;
   mediaKind?: "image" | "video" | "audio";
+  fileKind?: "archive" | "executable" | "database" | "script" | "network" | "key" | "i18n" | "encrypted" | "design";
+  isExec?: boolean;
 }
 export interface DirInfo { name: string; rel: string; mtime: string; size?: number }
 export interface Breadcrumb { name: string; rel: string }
