@@ -17,7 +17,9 @@ export function getIndex(disk: string): DiskIndex | undefined {
 export async function saveIndex(index: DiskIndex) {
   await fs.mkdir(INDEX_DIR, { recursive: true });
   const file = path.join(INDEX_DIR, `${index.disk}.json`);
-  await fs.writeFile(file, JSON.stringify(index));
+  const tmp = file + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(index));
+  await fs.rename(tmp, file); // atomic swap to avoid readers seeing partial
   log("indexer", "store", "saved index", { disk: index.disk, file });
 }
 
@@ -32,4 +34,3 @@ export async function loadIndex(disk: string): Promise<DiskIndex | null> {
     return null;
   }
 }
-

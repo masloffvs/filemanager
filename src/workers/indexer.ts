@@ -23,6 +23,17 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
   };
 
   const stack: string[] = [""];
+  let lastSnapshot = 0;
+  const SNAPSHOT_EVERY_MS = 750;
+  const maybeSnapshot = async () => {
+    const now = Date.now();
+    if (now - lastSnapshot < SNAPSHOT_EVERY_MS) return;
+    lastSnapshot = now;
+    const idx: DiskIndex = { disk: disk.name, root, builtAt: Date.now(), files: { ...files }, dirs: { ...dirs } };
+    setIndex(disk.name, idx); // update in-memory for UI
+    await saveIndex(idx); // atomic save to file
+    log("indexer", "snapshot", "partial saved", { disk: disk.name, files: Object.keys(files).length, dirs: Object.keys(dirs).length });
+  };
   while (stack.length) {
     const rel = stack.pop()!; // '' at root
     const abs = path.join(root, rel);
@@ -73,6 +84,7 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
             if (!dirs[drel]) dirs[drel] = { rel: drel, mtime: stDirMtime, size: 0, childrenDirs: [], childrenFiles: [] };
             dirs[drel].size += size;
           }
+          await maybeSnapshot();
         }
       } catch {}
     }
@@ -85,6 +97,9 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
     files,
     dirs,
   };
+  // final snapshot
+  setIndex(disk.name, index);
+  await saveIndex(index);
   return index;
 }
 
@@ -92,8 +107,6 @@ async function indexAll() {
   for (const d of DISKS) {
     try {
       const idx = await buildForDisk(d);
-      setIndex(d.name, idx);
-      await saveIndex(idx);
       log("indexer", "build", "built index", { disk: d.name, files: Object.keys(idx.files).length, dirs: Object.keys(idx.dirs).length });
     } catch (e:any) {
       log("indexer", "build", "failed", { disk: d.name, error: String(e?.message||e) });
@@ -104,14 +117,18 @@ async function indexAll() {
 function debounce(fn: () => void, ms: number) { let t: any; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
 
 async function startWatchers() {
+  const building = new Map<string, boolean>();
   for (const d of DISKS) {
     try {
       const abs = d.path;
       const run = debounce(async () => {
         log("watcher", "fs", "change detected, reindex", { disk: d.name });
-        const idx = await buildForDisk(d);
-        setIndex(d.name, idx);
-        await saveIndex(idx);
+        if (building.get(d.name)) { log("watcher", "fs", "skip, build in progress", { disk: d.name }); return; }
+        building.set(d.name, true);
+        try {
+          const idx = await buildForDisk(d);
+          log("indexer", "build", "built index", { disk: d.name, files: Object.keys(idx.files).length, dirs: Object.keys(idx.dirs).length });
+        } finally { building.set(d.name, false); }
       }, 1000);
       // Recursive on macOS should work; if not, we fallback to noop
       (fs as any).watch(abs, { recursive: true }, (_event, _file) => run());
@@ -131,4 +148,3 @@ export async function startIndexingWorkers() {
   await indexAll();
   await startWatchers();
 }
-
