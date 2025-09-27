@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Storage</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg: #f7f9fb;
+    --panel: #ffffff;
+    --fg: #0b1320;
+    --muted: #7a8a99;
+    --border: #e5eaf0;
+    --divider: #eef2f6;
+    --link: #1677ff;
+    --dir-bg: #f6f9ff;
+  }
+  *{box-sizing:border-box}
+  html, body { height: 100%; }
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, "Noto Sans", "Segoe UI", Roboto, "Inter", system-ui, sans-serif;
+    line-height:1.5; font-size:14px; min-height:100dvh; padding:24px 0;
+  }
+  .wrap{ width:min(1120px,100%); margin:0 auto; padding:0 18px 10px; }
+  .title{ margin:0 0 6px; font-size:18px; font-weight:500; letter-spacing:.01em }
+  .crumbs{ margin:8px 0 14px; color:var(--muted); display:flex; align-items:center; gap:6px; flex-wrap:wrap }
+  .crumb, .crumb-sep, .current { font-size:12px }
+  .crumb { color: var(--link); text-decoration: none; font-weight:500 }
+  .crumb:hover { text-decoration: underline }
+  .crumb-sep { color: var(--border); }
+  .up{ font-size:12px; color:var(--link); text-decoration:none; margin-left:8px }
+  .up:hover{ text-decoration:underline }
+  h2.day{ margin:18px 0 8px; font-size:12px; color:var(--muted); font-weight:600; letter-spacing:.04em; text-transform:uppercase }
+  ul.list{ list-style:none; padding:0; margin:0; border-top:1px solid var(--divider); }
+  .row{ padding:10px 0; border-bottom:1px solid var(--divider); display:flex; align-items:baseline; gap:12px; }
+  .row:last-child{ border-bottom:0 }
+  .left{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .right{ flex:0 0 auto; color:var(--muted); font-size:12px; text-align:right }
+  .dir{ background:var(--dir-bg) }
+  .link{ color:var(--link); text-decoration:none; font-weight:500 }
+  .link:hover{ text-decoration:underline }
+  .ext{ opacity:.55 }
+  .section-title{ margin:16px 0 8px; font-size:12px; color:var(--muted); font-weight:600; letter-spacing:.04em; text-transform:uppercase }
+  .empty{ color:var(--muted); padding:10px 0 }
+  .hint{ margin-top:14px; color:var(--muted); font-size:12px; background:var(--bg); border:1px dashed var(--border); border-radius:8px; }
+  .hint > summary { cursor:pointer; padding:8px 10px; list-style:none; }
+  .hint[open] > summary { border-bottom:1px dashed var(--border); }
+  .hint > summary::-webkit-details-marker { display:none; }
+  .code{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; margin:0; padding:10px; overflow:auto }
+  /* simple syntax highlight */
+  .hl .prompt{ color:var(--muted) }
+  .hl .bin{ color:#0e4ecf; font-weight:600 }
+  .hl .opt{ color:#1677ff }
+  .hl .arg{ color:#1aa3a3 }
+  .hl .url{ color:#0550ae }
+</style>
+<div class="wrap">
+  <h1 class="title">storage:~$ ls -lah {{TITLE_PATH}}</h1>
+  <div class="crumbs">{{BREADCRUMBS}}{{UPLINK}}</div>
+
+  {{DIR_SECTION}}
+
+  {{FILES_SECTION}}
+
+  <details class="hint">
+    <summary>CLI commands</summary>
+    <pre class="code hl"># download (aria2c, fast):
+<span class="prompt">$</span> <span class="bin">aria2c</span> <span class="opt">-x16</span> <span class="opt">-o</span> <span class="arg">&lt;save-as&gt;</span> "<span class="url">{{BASE}}/files/&lt;path/to/file&gt;</span>"
+
+# upload with PUT (preserve filename via path):
+<span class="prompt">$</span> <span class="bin">curl</span> <span class="opt">-T</span> <span class="arg">./file.ext</span> "<span class="url">{{BASE}}/upload/&lt;optional/subdir&gt;/file.ext</span>"
+
+# upload with PUT (plain /upload ⇒ auto name, or pass header):
+<span class="prompt">$</span> <span class="bin">curl</span> <span class="opt">-T</span> <span class="arg">./file.ext</span> "<span class="url">{{BASE}}/upload</span>"
+<span class="prompt">$</span> <span class="bin">curl</span> <span class="opt">-T</span> <span class="arg">./file.ext</span> <span class="opt">-H</span> <span class="arg">"X-Filename: file.ext"</span> "<span class="url">{{BASE}}/upload?dir=&lt;subdir&gt;</span>"
+
+# upload multipart (classic):
+<span class="prompt">$</span> <span class="bin">curl</span> "<span class="url">{{BASE}}/upload?dir=&lt;subdir&gt;</span>" <span class="opt">-F</span> <span class="arg">"file=@/path/to/file.ext"</span></pre>
+  </details>
+</div>
