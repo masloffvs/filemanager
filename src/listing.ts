@@ -3,6 +3,8 @@ import path from "path";
 import { DirInfo, FileInfo } from "./types";
 import { makeBreadcrumbs } from "./utils/breadcrumbs";
 import { resolveSafe } from "./utils/path";
+import { getDirSize } from "./utils/dirsize";
+import { lookupMimeByPath } from "./utils/mime";
 
 export async function listEntries(rel: string) {
   const { abs, rel: cleaned } = resolveSafe(rel);
@@ -15,11 +17,21 @@ export async function listEntries(rel: string) {
       const base = ent.name;
       const entryRel = cleaned ? `${cleaned}/${base}` : base;
       const p = path.join(abs, base);
-      const st = await fs.stat(p);
-      if (ent.isDirectory())
-        dirs.push({ name: base, rel: entryRel, mtime: new Date(st.mtimeMs).toISOString() });
-      else if (ent.isFile())
-        files.push({ name: base, rel: entryRel, size: st.size, mtime: new Date(st.mtimeMs).toISOString() });
+      const lst = await fs.lstat(p);
+      const isLink = lst.isSymbolicLink();
+      const st = isLink ? await fs.stat(p).catch(() => lst) : lst;
+      if (st.isDirectory()) {
+        let size: number | undefined = undefined;
+        try { size = await getDirSize(p); } catch { /* ignore */ }
+        dirs.push({ name: base, rel: entryRel, mtime: new Date(st.mtimeMs).toISOString(), size });
+      } else if (st.isFile() || isLink) {
+        const mime = lookupMimeByPath(p);
+        let mediaKind: FileInfo["mediaKind"] | undefined = undefined;
+        if (mime.startsWith("image/")) mediaKind = "image";
+        else if (mime.startsWith("video/")) mediaKind = "video";
+        else if (mime.startsWith("audio/")) mediaKind = "audio";
+        files.push({ name: base, rel: entryRel, size: (st as any).size ?? 0, mtime: new Date(st.mtimeMs).toISOString(), isLink, mediaKind });
+      }
     })
   );
 

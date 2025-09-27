@@ -53,13 +53,15 @@ export async function startServer() {
           const st = await fs.stat(abs);
           if (!st.isFile()) throw new Error("not a file");
           const file = Bun.file(abs);
-          const headers = {
-            "Content-Type": lookupMimeByPath(abs),
-            "Content-Length": String(st.size),
-            "Content-Disposition": `attachment; filename="${path.basename(abs)}"`,
-            ...baseSecurityHeaders(),
-          };
-          return new Response(file, { headers });
+        const mime = lookupMimeByPath(abs);
+        const isInline = mime.startsWith("image/") || mime.startsWith("video/");
+        const headers: Record<string, string> = {
+          "Content-Type": mime,
+          "Content-Length": String(st.size),
+          ...baseSecurityHeaders(),
+        };
+        if (!isInline) headers["Content-Disposition"] = `attachment; filename="${path.basename(abs)}"`;
+        return new Response(file, { headers });
         } catch {
           if (wantsJson(req, url)) return sendJson({ ok: false, error: "not found" }, 404);
           return sendText("Not found", 404);
