@@ -2,14 +2,21 @@ import { promises as fs } from "fs";
 import path from "path";
 import { STORAGE, MAX_UPLOAD_BYTES, STRICT_MIME } from "./config";
 import { listEntries } from "./listing";
+import { startIndexingWorkers } from "./workers/indexer";
+import { getIndex } from "./index/store";
+import { DISKS } from "./config";
+import { makeBreadcrumbs } from "./utils/breadcrumbs";
+import { ApiListResponse } from "./types";
 import { enforceNameByDetected, extFromName, detectFileType, lookupMimeByPath } from "./utils/mime";
 import { resolveSafe, sanitizeRelPath, sanitizeSegment } from "./utils/path";
 import { baseSecurityHeaders, sendHtml, sendJson, sendText, wantsJson } from "./http/http";
-import { renderHtmlList } from "../web/templates";
+import { renderHtmlList, renderDisks } from "../web/templates";
 import { randomSuffixHex } from "./utils/random";
 
 export async function startServer() {
   await fs.mkdir(STORAGE, { recursive: true });
+  // start background indexers
+  startIndexingWorkers().catch(()=>{});
 
   Bun.serve({
     port: 3003,
@@ -17,39 +24,68 @@ export async function startServer() {
       const url = new URL(req.url);
       const pathname = url.pathname;
 
-      // Root listing
+      // Root listing => redirect to default disk
       if (req.method === "GET" && (pathname === "/" || pathname === "")) {
-        try {
-          const listing = await listEntries("");
-          if (wantsJson(req, url)) return sendJson({ ok: true, ...listing });
-          return sendHtml(await renderHtmlList(url.origin, { ok: true, ...listing }));
-        } catch (err) {
-          const error = String(err instanceof Error ? err.message : err);
-          if (wantsJson(req, url)) return sendJson({ ok: false, error }, 500);
-          return sendText("Internal Server Error", 500);
-        }
+        return Response.redirect(url.origin + "/browse/storage", 302);
       }
 
-      // GET /browse[/<rel>]
+      // GET /disks => list configured disks
+      if (req.method === "GET" && pathname === "/disks") {
+        const disks = DISKS.map(d=>{
+          const idx = getIndex(d.name);
+          const size = idx?.dirs['']?.size;
+          const builtAt = idx?.builtAt;
+          return { name:d.name, path:d.path, size, builtAt };
+        });
+        if (wantsJson(req, url)) return sendJson({ ok:true, cwd:"", dirs:[], files:[], breadcrumbs:[] } as any, 200);
+        const html = await renderDisks(url.origin, disks);
+        return sendHtml(html);
+      }
+
+      // GET /browse[/<disk>[/<rel>]]
       if (req.method === "GET" && pathname.startsWith("/browse")) {
-        const relRaw = pathname.slice("/browse".length).replace(/^\/+/, "");
-        const relDecoded = relRaw ? relRaw.split("/").map(decodeURIComponent).join("/") : "";
+        const parts = pathname.split('/').filter(Boolean); // [browse, disk?, ...rel]
+        const disk = parts[1] || 'storage';
+        const relParts = parts.slice(2).map(decodeURIComponent);
+        const relDecoded = relParts.join('/');
         try {
-          const listing = await listEntries(relDecoded);
+          // Try indexed listing for selected disk
+          const idx = getIndex(disk);
+          let listing: { cwd: string; dirs: any[]; files: any[]; breadcrumbs: any[] };
+          if (idx && idx.dirs[relDecoded] !== undefined) {
+            const dir = idx.dirs[relDecoded] || { childrenDirs: [], childrenFiles: [] };
+            const dirs = dir.childrenDirs.map((name: string) => {
+              const childRel = relDecoded ? `${relDecoded}/${name}` : name;
+              const d = idx.dirs[childRel];
+              return { name, rel: childRel, mtime: new Date((d?.mtime||0)).toISOString(), size: d?.size };
+            });
+            const files = dir.childrenFiles.map((name: string) => {
+              const childRel = relDecoded ? `${relDecoded}/${name}` : name;
+              const f = idx.files[childRel]!;
+              return { name, rel: childRel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: f.isLink, mediaKind: f.mediaKind };
+            });
+            listing = { cwd: relDecoded, dirs, files, breadcrumbs: makeBreadcrumbs(relDecoded) };
+          } else {
+            // No index yet; show 404 for clarity (could fallback listEntries for STORAGE only)
+            throw new Error('no index');
+          }
           if (wantsJson(req, url)) return sendJson({ ok: true, ...listing });
-          return sendHtml(await renderHtmlList(url.origin, { ok: true, ...listing }));
+          return sendHtml(await renderHtmlList(url.origin, { ok: true, ...listing }, { browsePrefix: `/${disk}`, filePrefix: `/${disk}` }));
         } catch {
           if (wantsJson(req, url)) return sendJson({ ok: false, error: "not found" }, 404);
           return sendText("Not found", 404);
         }
       }
 
-      // GET /files/<rel> (stream)
+      // GET /files[/<disk>]/<rel> (stream)
       if (req.method === "GET" && pathname.startsWith("/files/")) {
-        const relRaw = pathname.slice("/files/".length);
-        const relDecoded = relRaw.split("/").map(decodeURIComponent).join("/");
+        const rest = pathname.slice("/files/".length);
+        const segs = rest.split('/').filter(Boolean).map(decodeURIComponent);
+        const disk = DISKS.find(d=>d.name === segs[0]) ? segs.shift()! : 'storage';
+        const relDecoded = segs.join('/');
         try {
-          const { abs } = resolveSafe(relDecoded);
+          const diskRoot = DISKS.find(d=>d.name===disk)?.path || STORAGE;
+          const abs = path.resolve(diskRoot, relDecoded);
           const st = await fs.stat(abs);
           if (!st.isFile()) throw new Error("not a file");
           const file = Bun.file(abs);
@@ -247,6 +283,16 @@ export async function startServer() {
           return sendJson({ ok: true, file: relOut, size: buf.length });
         } catch (err) {
           return sendJson({ ok: false, error: String(err) }, 500);
+        }
+      }
+
+      // POST /admin/index/rebuild -> force full rebuild
+      if (req.method === "POST" && pathname === "/admin/index/rebuild") {
+        try {
+          await startIndexingWorkers();
+          return sendJson({ ok: true, file: "reindex started" } as any);
+        } catch (e:any) {
+          return sendJson({ ok: false, error: String(e?.message||e) }, 500);
         }
       }
 

@@ -15,7 +15,15 @@ export function htmlSecurityHeaders() {
   return {
     ...baseSecurityHeaders(),
     "Content-Security-Policy":
-      "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      [
+        "default-src 'none'",
+        "style-src 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+      ].join('; '),
   };
 }
 
@@ -39,4 +47,3 @@ export function sendHtml(html: string, status = 200) {
 export function sendText(text: string, status = 200) {
   return new Response(text, { status, headers: { "Content-Type": "text/plain; charset=utf-8", ...baseSecurityHeaders() } });
 }
-

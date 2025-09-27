@@ -77,10 +77,15 @@ function groupFilesByDay(files: FileInfo[]): FileGroups {
 export { makeBreadcrumbs };
 
 let LIST_TEMPLATE_CACHE: string | null = null;
+let DISKS_TEMPLATE_CACHE: string | null = null;
 
-export async function renderHtmlList(base: string, payload: ApiListResponse) {
+export async function renderHtmlList(
+  base: string,
+  payload: ApiListResponse,
+  opts: { browsePrefix?: string; filePrefix?: string } = {}
+) {
+  const { browsePrefix = "", filePrefix = "" } = opts;
   const { cwd, dirs, files, breadcrumbs } = payload;
-  const groups = groupFilesByDay(files);
 
   const FOLDER_SVG =
     '<svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h2.879a1.5 1.5 0 0 1 1.06.44l1.122 1.12A1.5 1.5 0 0 0 9.62 4H12.5A1.5 1.5 0 0 1 14 5.5v1.401a2.986 2.986 0 0 0-1.5-.401h-9c-.546 0-1.059.146-1.5.401V3.5ZM2 9.5v3A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-3A1.5 1.5 0 0 0 12.5 8h-9A1.5 1.5 0 0 0 2 9.5Z"/></svg>';
@@ -100,7 +105,7 @@ export async function renderHtmlList(base: string, payload: ApiListResponse) {
       const href =
         i === breadcrumbs.length - 1
           ? null
-          : `${base}/browse/${encodeRelForUrl(c.rel)}`;
+          : `${base}/browse${browsePrefix}/${encodeRelForUrl(c.rel)}`;
       return href
         ? `<a class="crumb" href="${href}">${escapeHtml(c.name)}</a>`
         : `<span class="crumb current">${escapeHtml(c.name)}</span>`;
@@ -111,16 +116,12 @@ export async function renderHtmlList(base: string, payload: ApiListResponse) {
     breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2].rel : null;
   const upLink =
     upRel !== null
-      ? `<a class="up" href="${base}/browse/${encodeRelForUrl(
-          upRel
-        )}">cd ..</a>`
+      ? `<a class="up" href="${base}/browse${browsePrefix}/${encodeRelForUrl(upRel)}">cd ..</a>`
       : "";
 
   const dirItems = dirs
     .map((d) => {
-      const left = `<a class="link" href="${base}/browse/${encodeRelForUrl(
-        d.rel
-      )}">${FOLDER_SVG}<span class="fname">${escapeHtml(d.name)}/</span></a>`;
+      const left = `<a class="link" href="${base}/browse${browsePrefix}/${encodeRelForUrl(d.rel)}">${FOLDER_SVG}<span class="fname">${escapeHtml(d.name)}/</span></a>`;
       const size =
         (d as any).size != null ? prettyBytes(Number((d as any).size)) : "";
       const right = size
@@ -132,50 +133,37 @@ export async function renderHtmlList(base: string, payload: ApiListResponse) {
     })
     .join("");
 
-  const fileGroupsHtml =
-    groups.length === 0
-      ? ""
-      : groups
-          .map((g) => {
-            const header = `<h2 class="day">${escapeHtml(g.day)}</h2>`;
-            const items = g.items
-              .map((f) => {
-                const icon = (f as any).isLink
-                  ? LINK_SVG
-                  : (f as any).mediaKind === "image"
-                  ? PHOTO_SVG
-                  : (f as any).mediaKind === "video"
-                  ? VIDEO_SVG
-                  : FILE_SVG;
-                const downloadAttr =
-                  (f as any).mediaKind === "image" ||
-                  (f as any).mediaKind === "video"
-                    ? ""
-                    : " download";
-                const left = `<a class="link" href="${base}/files/${encodeRelForUrl(
-                  f.rel
-                )}"${downloadAttr}>${icon}<span class="fname">${renderNameWithExt(
-                  f.name
-                )}</span></a>`;
-                const right = `<span class="meta">${escapeHtml(
-                  prettyBytes(f.size)
-                )} · ${escapeHtml(timeHM(f.mtime))}</span>`;
-                return `<li class="row"><div class="left">${left}</div><div class="right">${right}</div></li>`;
-              })
-              .join("");
-            return `${header}<ul class="list">${items}</ul>`;
-          })
-          .join("");
+  const fileItems = files
+    .map((f) => {
+      const icon = (f as any).isLink
+        ? LINK_SVG
+        : (f as any).mediaKind === "image"
+        ? PHOTO_SVG
+        : (f as any).mediaKind === "video"
+        ? VIDEO_SVG
+        : FILE_SVG;
+      const downloadAttr =
+        (f as any).mediaKind === "image" || (f as any).mediaKind === "video"
+          ? ""
+          : " download";
+      const left = `<a class="link" href="${base}/files${filePrefix}/${encodeRelForUrl(f.rel)}"${downloadAttr}>${icon}<span class="fname">${renderNameWithExt(
+        f.name
+      )}</span></a>`;
+      const right = `<span class="meta">${escapeHtml(prettyBytes(f.size))} · ${escapeHtml(
+        timeHM(f.mtime)
+      )}</span>`;
+      return `<li class="row"><div class="left">${left}</div><div class="right">${right}</div></li>`;
+    })
+    .join("");
 
   if (!LIST_TEMPLATE_CACHE) {
     LIST_TEMPLATE_CACHE = await Bun.file("web/list.html").text();
   }
 
-  const filesSection = files.length
-    ? `<div class="section-title">Files</div>${fileGroupsHtml}`
-    : dirs.length === 0
-    ? `<div class="empty">${EMPTY_SVG}<div class="empty-text">This folder is empty</div></div>`
-    : "";
+  const allRows = (dirItems + fileItems).trim();
+  const listSection = allRows
+    ? `<ul class="list">${allRows}</ul>`
+    : `<div class="empty">${EMPTY_SVG}<div class="empty-text">This folder is empty</div></div>`;
 
   return LIST_TEMPLATE_CACHE.replaceAll(
     "{{TITLE_PATH}}",
@@ -183,12 +171,17 @@ export async function renderHtmlList(base: string, payload: ApiListResponse) {
   )
     .replaceAll("{{BREADCRUMBS}}", bc)
     .replaceAll("{{UPLINK}}", upLink)
-    .replaceAll(
-      "{{DIR_SECTION}}",
-      dirs.length
-        ? `<div class="section-title">Directories</div><ul class="list">${dirItems}</ul>`
-        : ""
-    )
-    .replaceAll("{{FILES_SECTION}}", filesSection)
+    .replaceAll("{{DIR_SECTION}}", listSection)
+    .replaceAll("{{FILES_SECTION}}", "")
     .replaceAll("{{BASE}}", base);
+}
+
+export async function renderDisks(base: string, disks: Array<{ name: string; path: string; size?: number; builtAt?: number }>) {
+  if (!DISKS_TEMPLATE_CACHE) DISKS_TEMPLATE_CACHE = await Bun.file("web/disks.html").text();
+  const items = disks.map(d => {
+    const size = d.size != null ? ` · ${prettyBytes(d.size)}` : '';
+    const built = d.builtAt ? ` · indexed ${new Date(d.builtAt).toLocaleString()}` : '';
+    return `<li><a class="link name" href="${base}/browse/${encodeRelForUrl(d.name)}">${escapeHtml(d.name)}</a><span class="path">${escapeHtml(d.path)}</span><span class="meta">${escapeHtml((size+built).trim())}</span></li>`;
+  }).join("\n");
+  return DISKS_TEMPLATE_CACHE.replace("{{DISK_ITEMS}}", items);
 }
