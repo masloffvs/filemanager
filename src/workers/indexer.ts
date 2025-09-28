@@ -6,7 +6,6 @@ import { log } from "../utils/log";
 import { classifyFileKind } from "../utils/kind";
 import { lookupMimeByPath } from "../utils/mime";
 import { openDb, upsertDisk, upsertNode, deleteNodesNotSeen, updateDirSize } from "../index/db";
-import { classifyFileKind } from "../utils/kind";
 
 const buildingState = new Map<string, boolean>();
 export function isBuilding(disk: string) { return !!buildingState.get(disk); }
@@ -24,6 +23,8 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
   const root = disk.path;
   const files: Record<string, IndexedFile> = {};
   const dirs: Record<string, IndexedDir> = {};
+  // Use a single stable seen_at for the whole run to guarantee cleanup
+  const runSeenAt = Date.now();
 
   const ensureDir = async (rel: string, mtime: number) => {
     if (!dirs[rel]) dirs[rel] = { rel, mtime, size: 0, childrenDirs: [], childrenFiles: [] };
@@ -39,7 +40,7 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
     const now = Date.now();
     if (now - lastSnapshot < SNAPSHOT_EVERY_MS) return;
     lastSnapshot = now;
-    const seen_at = Date.now();
+    const seen_at = runSeenAt;
     let processed = 0;
     // Upsert a batch of dirty dirs
     for (const rel of Array.from(dirtyDirs)) {
@@ -157,7 +158,7 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
     dirs,
   };
   // final snapshot: write to SQLite and cleanup
-  const seen_at = Date.now();
+  const seen_at = runSeenAt;
   for (const [rel, d] of Object.entries(dirs)) {
     const parent_rel = rel.split("/").slice(0, -1).join("/");
     upsertNode({ disk_id: diskId, rel, parent_rel, name: rel.split("/").slice(-1)[0] || "", dir: 1, size: d.size || 0, mtime: +new Date(d.mtime), is_link: 0, seen_at });
