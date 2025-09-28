@@ -25,3 +25,13 @@ export const DISKS: DiskConfig[] = (() => {
 })();
 
 export const INDEX_DIR = path.resolve("./.index");
+
+// Indexer parallelism (per disk)
+export const INDEX_CONCURRENCY = Math.max(1, parseInt(process.env.INDEX_CONCURRENCY || "3", 10) || 3);
+
+// Backpressure: maximum queued directories awaiting scan
+export const INDEX_MAX_QUEUE = Math.max(100, parseInt(process.env.INDEX_MAX_QUEUE || "5000", 10) || 5000);
+
+// Snapshot cadence (ms) and batch sizes per snapshot
+export const INDEX_SNAPSHOT_MS = Math.max(100, parseInt(process.env.INDEX_SNAPSHOT_MS || "750", 10) || 750);
+export const INDEX_SNAPSHOT_BATCH = Math.max(100, parseInt(process.env.INDEX_SNAPSHOT_BATCH || "2000", 10) || 2000);

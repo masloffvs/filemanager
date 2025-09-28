@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { DISKS, DiskConfig } from "../config";
+import { DISKS, DiskConfig, INDEX_CONCURRENCY, INDEX_MAX_QUEUE, INDEX_SNAPSHOT_MS, INDEX_SNAPSHOT_BATCH } from "../config";
 import { DiskIndex, IndexedDir, IndexedFile } from "../index/types";
 import { log } from "../utils/log";
 import { classifyFileKind } from "../utils/kind";
@@ -30,27 +30,39 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
     else dirs[rel].mtime = Math.max(dirs[rel].mtime, mtime);
   };
 
-  const stack: string[] = [""];
+  const queue: string[] = [""];
+  const dirtyDirs = new Set<string>();
+  const dirtyFiles = new Set<string>();
   let lastSnapshot = 0;
-  const SNAPSHOT_EVERY_MS = 750;
+  const SNAPSHOT_EVERY_MS = INDEX_SNAPSHOT_MS;
   const maybeSnapshot = async () => {
     const now = Date.now();
     if (now - lastSnapshot < SNAPSHOT_EVERY_MS) return;
     lastSnapshot = now;
     const seen_at = Date.now();
-    for (const [rel, d] of Object.entries(dirs)) {
+    let processed = 0;
+    // Upsert a batch of dirty dirs
+    for (const rel of Array.from(dirtyDirs)) {
+      const d = dirs[rel]; if (!d) { dirtyDirs.delete(rel); continue; }
       const parent_rel = rel.split("/").slice(0, -1).join("/");
       upsertNode({ disk_id: diskId, rel, parent_rel, name: rel.split("/").slice(-1)[0] || "", dir: 1, size: d.size || 0, mtime: +new Date(d.mtime), is_link: 0, seen_at });
+      dirtyDirs.delete(rel);
+      processed++; if (processed >= INDEX_SNAPSHOT_BATCH) break;
     }
-    for (const [rel, f] of Object.entries(files)) {
-      const parent_rel = rel.split("/").slice(0, -1).join("/");
-      const kinds = classifyFileKind(path.join(root, rel), 0);
-      upsertNode({ disk_id: diskId, rel, parent_rel, name: f.name, dir: 0, size: f.size || 0, mtime: f.mtime, is_link: f.isLink ? 1 : 0, media_kind: f.mediaKind || null, file_kind: kinds.kind || null, is_exec: kinds.isExec ? 1 : 0, seen_at });
+    // If still have budget, upsert files
+    if (processed < INDEX_SNAPSHOT_BATCH) {
+      for (const rel of Array.from(dirtyFiles)) {
+        const f = files[rel]; if (!f) { dirtyFiles.delete(rel); continue; }
+        const parent_rel = rel.split("/").slice(0, -1).join("/");
+        const kinds = classifyFileKind(path.join(root, rel), 0);
+        upsertNode({ disk_id: diskId, rel, parent_rel, name: f.name, dir: 0, size: f.size || 0, mtime: f.mtime, is_link: f.isLink ? 1 : 0, media_kind: f.mediaKind || null, file_kind: kinds.kind || null, is_exec: kinds.isExec ? 1 : 0, seen_at });
+        dirtyFiles.delete(rel);
+        processed++; if (processed >= INDEX_SNAPSHOT_BATCH) break;
+      }
     }
     log("indexer", "snapshot", "partial saved", { disk: disk.name, files: Object.keys(files).length, dirs: Object.keys(dirs).length });
   };
-  while (stack.length) {
-    const rel = stack.pop()!; // '' at root
+  async function processDir(rel: string) {
     const abs = path.join(root, rel);
     let entries: any[] = [];
     let stDirMtime = Date.now();
@@ -59,9 +71,10 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
       stDirMtime = st.mtimeMs;
       entries = await fs.readdir(abs, { withFileTypes: true });
     } catch {
-      continue;
+      return;
     }
     await ensureDir(rel, stDirMtime);
+    dirtyDirs.add(rel);
     for (const ent of entries) {
       const name = ent.name;
       const childRel = rel ? `${rel}/${name}` : name;
@@ -74,7 +87,12 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
           dirs[rel].childrenDirs.push(name);
           await ensureDir(childRel, st.mtimeMs);
           log("indexer", "dir", "discovered", { disk: disk.name, rel: childRel, abs: childAbs, mtime: st.mtimeMs });
-          stack.push(childRel);
+          // backpressure: limit queue size
+          queue.push(childRel);
+          while (queue.length > INDEX_MAX_QUEUE) {
+            await maybeSnapshot();
+            await new Promise(res => setTimeout(res, 10));
+          }
         } else if (st.isFile() || isLink) {
           const id = await sha1Hex(`${disk.name}:${childRel}`);
           const mime = lookupMimeByPath(childAbs);
@@ -92,6 +110,7 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
             isLink,
             mediaKind,
           };
+          dirtyFiles.add(childRel);
           log("indexer", "file", "indexed", {
             disk: disk.name,
             rel: childRel,
@@ -111,12 +130,24 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
             const drel = parts.slice(0, i).join("/");
             if (!dirs[drel]) dirs[drel] = { rel: drel, mtime: stDirMtime, size: 0, childrenDirs: [], childrenFiles: [] };
             dirs[drel].size += size;
+            dirtyDirs.add(drel);
           }
-          await maybeSnapshot();
         }
       } catch {}
     }
+    await maybeSnapshot();
   }
+
+  async function worker() {
+    for (;;) {
+      const rel = queue.shift();
+      if (rel === undefined) break;
+      await processDir(rel);
+    }
+  }
+
+  const workers = Array.from({ length: INDEX_CONCURRENCY }, () => worker());
+  await Promise.all(workers);
 
   const index: DiskIndex = {
     disk: disk.name,
