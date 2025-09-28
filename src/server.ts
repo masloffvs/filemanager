@@ -3,7 +3,7 @@ import path from "path";
 import { STORAGE, MAX_UPLOAD_BYTES, STRICT_MIME } from "./config";
 import { listEntries } from "./listing";
 import { startIndexingWorkers, isBuilding } from "./workers/indexer";
-import { getIndex } from "./index/store";
+import { openDb, getDiskId, listChildren, getRootSize, getNode } from "./index/db";
 import { DISKS } from "./config";
 import { makeBreadcrumbs } from "./utils/breadcrumbs";
 import { ApiListResponse } from "./types";
@@ -37,20 +37,12 @@ export async function startServer() {
         const disk = segs.shift() || 'storage';
         const relDecoded = segs.join('/');
         try {
-          const idx = getIndex(disk);
-          if (!idx) return sendJson({ ok: false, error: "no index" }, 503);
-          if (idx.dirs[relDecoded] === undefined) return sendJson({ ok: false, error: "not found" }, 404);
-          const dir = idx.dirs[relDecoded] || { childrenDirs: [], childrenFiles: [] } as any;
-          const dirs = dir.childrenDirs.map((name: string) => {
-            const childRel = relDecoded ? `${relDecoded}/${name}` : name;
-            const d = idx.dirs[childRel];
-            return { name, rel: childRel, mtime: new Date((d?.mtime||0)).toISOString(), size: d?.size };
-          });
-          const files = dir.childrenFiles.map((name: string) => {
-            const childRel = relDecoded ? `${relDecoded}/${name}` : name;
-            const f = idx.files[childRel]!;
-            return { name, rel: childRel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: f.isLink, mediaKind: f.mediaKind, fileKind: (f as any).fileKind, isExec: (f as any).isExec } as any;
-          });
+          await openDb();
+          const id = getDiskId(disk);
+          if (!id) return sendJson({ ok: false, error: "no index" }, 503);
+          const res = listChildren(id, relDecoded);
+          const dirs = (res.dirs||[]).map((d:any)=>({ name: d.name, rel: d.rel, mtime: new Date(d.mtime).toISOString(), size: d.size }));
+          const files = (res.files||[]).map((f:any)=>({ name: f.name, rel: f.rel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: !!f.is_link, mediaKind: f.media_kind, fileKind: f.file_kind, isExec: !!f.is_exec }));
           const payload = { ok: true, cwd: relDecoded, dirs, files, breadcrumbs: makeBreadcrumbs(relDecoded) } as any;
           return sendJson(payload);
         } catch (e:any) {
@@ -64,28 +56,29 @@ export async function startServer() {
         const segs = rest.split('/').filter(Boolean).map(decodeURIComponent);
         const disk = segs.shift() || 'storage';
         const relDecoded = segs.join('/');
-        const idx = getIndex(disk);
-        if (!idx) return sendJson({ ok: false, error: "no index" }, 503);
-        const f = idx.files[relDecoded];
+        await openDb();
+        const id = getDiskId(disk);
+        if (!id) return sendJson({ ok: false, error: "no index" }, 503);
+        const f = getNode(id, relDecoded);
         if (!f) return sendJson({ ok: false, error: "not found" }, 404);
-        return sendJson({ ok: true, file: { name: f.name, rel: f.rel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: f.isLink, mediaKind: f.mediaKind, fileKind: (f as any).fileKind, isExec: (f as any).isExec } } as any);
+        return sendJson({ ok: true, file: { name: f.name, rel: f.rel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: !!f.is_link, mediaKind: f.media_kind, fileKind: f.file_kind, isExec: !!f.is_exec } } as any);
       }
 
       // GET /api/index/state/<disk> -> building status + counts
       if (req.method === "GET" && pathname.startsWith("/api/index/state/")) {
         const disk = decodeURIComponent(pathname.slice("/api/index/state/".length)) || 'storage';
-        const idx = getIndex(disk);
-        return sendJson({ ok: true, building: isBuilding(disk), files: idx ? Object.keys(idx.files).length : 0, dirs: idx ? Object.keys(idx.dirs).length : 0, builtAt: idx?.builtAt } as any);
+        // counts optional; building flag is primary for UI
+        return sendJson({ ok: true, building: isBuilding(disk), files: 0, dirs: 0, builtAt: undefined } as any);
       }
 
       // GET /disks => list configured disks
       if (req.method === "GET" && pathname === "/disks") {
+        await openDb();
         const disks = await Promise.all(DISKS.map(async d=>{
-          const idx = getIndex(d.name);
-          const size = idx?.dirs['']?.size;
-          const builtAt = idx?.builtAt;
+          const id = getDiskId(d.name);
+          const size = id ? getRootSize(id) : null;
           const fsStats = await getFsStats(d.path);
-          return { name:d.name, path:d.path, size, builtAt, total: fsStats?.total, used: fsStats?.used, available: fsStats?.available, usedPercent: fsStats?.usedPercent };
+          return { name:d.name, path:d.path, size: size ?? undefined, builtAt: undefined, total: fsStats?.total, used: fsStats?.used, available: fsStats?.available, usedPercent: fsStats?.usedPercent };
         }));
         if (wantsJson(req, url)) return sendJson({ ok:true, cwd:"", dirs:[], files:[], breadcrumbs:[] } as any, 200);
         const html = await renderDisks(url.origin, disks);
@@ -99,28 +92,23 @@ export async function startServer() {
         const relParts = parts.slice(2).map(decodeURIComponent);
         const relDecoded = relParts.join('/');
         try {
-          // Try indexed listing for selected disk
-          const idx = getIndex(disk);
-          let listing: { cwd: string; dirs: any[]; files: any[]; breadcrumbs: any[] };
-          if (idx && idx.dirs[relDecoded] !== undefined) {
-            const dir = idx.dirs[relDecoded] || { childrenDirs: [], childrenFiles: [] };
-            const dirs = dir.childrenDirs.map((name: string) => {
-              const childRel = relDecoded ? `${relDecoded}/${name}` : name;
-              const d = idx.dirs[childRel];
-              return { name, rel: childRel, mtime: new Date((d?.mtime||0)).toISOString(), size: d?.size };
-            });
-            const files = dir.childrenFiles.map((name: string) => {
-              const childRel = relDecoded ? `${relDecoded}/${name}` : name;
-              const f = idx.files[childRel]!;
-              return { name, rel: childRel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: f.isLink, mediaKind: f.mediaKind };
-            });
-            listing = { cwd: relDecoded, dirs, files, breadcrumbs: makeBreadcrumbs(relDecoded) };
-          } else {
-            // No index yet; show 404 for clarity (could fallback listEntries for STORAGE only)
-            throw new Error('no index');
+          await openDb();
+          const diskId = getDiskId(disk);
+          if (diskId) {
+            const res = listChildren(diskId, relDecoded);
+            const dirs = (res.dirs||[]).map((d:any)=>({ name: d.name, rel: d.rel, mtime: new Date(d.mtime).toISOString(), size: d.size }));
+            const files = (res.files||[]).map((f:any)=>({ name: f.name, rel: f.rel, size: f.size, mtime: new Date(f.mtime).toISOString(), isLink: !!f.is_link, mediaKind: f.media_kind, fileKind: f.file_kind, isExec: !!f.is_exec }));
+            const listing = { cwd: relDecoded, dirs, files, breadcrumbs: makeBreadcrumbs(relDecoded) };
+            if (wantsJson(req, url)) return sendJson({ ok: true, ...listing });
+            return sendHtml(await renderHtmlList(url.origin, { ok: true, ...listing }, { browsePrefix: `/${disk}`, filePrefix: `/${disk}` }));
           }
-          if (wantsJson(req, url)) return sendJson({ ok: true, ...listing });
-          return sendHtml(await renderHtmlList(url.origin, { ok: true, ...listing }, { browsePrefix: `/${disk}`, filePrefix: `/${disk}` }));
+          // Fallback to FS for default storage disk if index is absent
+          if (disk === 'storage') {
+            const listing = await listEntries(relDecoded);
+            if (wantsJson(req, url)) return sendJson({ ok: true, ...listing });
+            return sendHtml(await renderHtmlList(url.origin, { ok: true, ...listing }, { browsePrefix: `/${disk}`, filePrefix: `/${disk}` }));
+          }
+          throw new Error('not indexed');
         } catch {
           if (wantsJson(req, url)) return sendJson({ ok: false, error: "not found" }, 404);
           return sendText("Not found", 404);

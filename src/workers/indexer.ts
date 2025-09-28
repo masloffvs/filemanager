@@ -2,9 +2,11 @@ import { promises as fs } from "fs";
 import path from "path";
 import { DISKS, DiskConfig } from "../config";
 import { DiskIndex, IndexedDir, IndexedFile } from "../index/types";
-import { loadIndex, saveIndex, setIndex } from "../index/store";
 import { log } from "../utils/log";
+import { classifyFileKind } from "../utils/kind";
 import { lookupMimeByPath } from "../utils/mime";
+import { openDb, upsertDisk, upsertNode, deleteNodesNotSeen, updateDirSize } from "../index/db";
+import { classifyFileKind } from "../utils/kind";
 
 const buildingState = new Map<string, boolean>();
 export function isBuilding(disk: string) { return !!buildingState.get(disk); }
@@ -17,6 +19,8 @@ async function sha1Hex(input: string): Promise<string> {
 
 async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
   buildingState.set(disk.name, true);
+  await openDb();
+  const diskId = upsertDisk(disk.name, disk.path);
   const root = disk.path;
   const files: Record<string, IndexedFile> = {};
   const dirs: Record<string, IndexedDir> = {};
@@ -33,9 +37,16 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
     const now = Date.now();
     if (now - lastSnapshot < SNAPSHOT_EVERY_MS) return;
     lastSnapshot = now;
-    const idx: DiskIndex = { disk: disk.name, root, builtAt: Date.now(), files: { ...files }, dirs: { ...dirs } };
-    setIndex(disk.name, idx); // update in-memory for UI
-    await saveIndex(idx); // atomic save to file
+    const seen_at = Date.now();
+    for (const [rel, d] of Object.entries(dirs)) {
+      const parent_rel = rel.split("/").slice(0, -1).join("/");
+      upsertNode({ disk_id: diskId, rel, parent_rel, name: rel.split("/").slice(-1)[0] || "", dir: 1, size: d.size || 0, mtime: +new Date(d.mtime), is_link: 0, seen_at });
+    }
+    for (const [rel, f] of Object.entries(files)) {
+      const parent_rel = rel.split("/").slice(0, -1).join("/");
+      const kinds = classifyFileKind(path.join(root, rel), 0);
+      upsertNode({ disk_id: diskId, rel, parent_rel, name: f.name, dir: 0, size: f.size || 0, mtime: f.mtime, is_link: f.isLink ? 1 : 0, media_kind: f.mediaKind || null, file_kind: kinds.kind || null, is_exec: kinds.isExec ? 1 : 0, seen_at });
+    }
     log("indexer", "snapshot", "partial saved", { disk: disk.name, files: Object.keys(files).length, dirs: Object.keys(dirs).length });
   };
   while (stack.length) {
@@ -62,6 +73,7 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
         if (st.isDirectory()) {
           dirs[rel].childrenDirs.push(name);
           await ensureDir(childRel, st.mtimeMs);
+          log("indexer", "dir", "discovered", { disk: disk.name, rel: childRel, abs: childAbs, mtime: st.mtimeMs });
           stack.push(childRel);
         } else if (st.isFile() || isLink) {
           const id = await sha1Hex(`${disk.name}:${childRel}`);
@@ -70,6 +82,7 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
           if (mime.startsWith("image/")) mediaKind = "image";
           else if (mime.startsWith("video/")) mediaKind = "video";
           else if (mime.startsWith("audio/")) mediaKind = "audio";
+          const kinds = classifyFileKind(childAbs, (st as any).mode ?? 0);
           files[childRel] = {
             id,
             name,
@@ -79,6 +92,17 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
             isLink,
             mediaKind,
           };
+          log("indexer", "file", "indexed", {
+            disk: disk.name,
+            rel: childRel,
+            abs: childAbs,
+            size: (st as any).size ?? 0,
+            mtime: st.mtimeMs,
+            link: isLink ? 1 : 0,
+            media: mediaKind || "",
+            kind: kinds.kind || "",
+            exec: kinds.isExec ? 1 : 0,
+          });
           dirs[rel].childrenFiles.push(name);
           // propagate size to ancestors
           const size = (st as any).size ?? 0;
@@ -101,9 +125,21 @@ async function buildForDisk(disk: DiskConfig): Promise<DiskIndex> {
     files,
     dirs,
   };
-  // final snapshot
-  setIndex(disk.name, index);
-  await saveIndex(index);
+  // final snapshot: write to SQLite and cleanup
+  const seen_at = Date.now();
+  for (const [rel, d] of Object.entries(dirs)) {
+    const parent_rel = rel.split("/").slice(0, -1).join("/");
+    upsertNode({ disk_id: diskId, rel, parent_rel, name: rel.split("/").slice(-1)[0] || "", dir: 1, size: d.size || 0, mtime: +new Date(d.mtime), is_link: 0, seen_at });
+  }
+  for (const [rel, f] of Object.entries(files)) {
+    const parent_rel = rel.split("/").slice(0, -1).join("/");
+    const kinds = classifyFileKind(path.join(root, rel), 0);
+    upsertNode({ disk_id: diskId, rel, parent_rel, name: f.name, dir: 0, size: f.size || 0, mtime: f.mtime, is_link: f.isLink ? 1 : 0, media_kind: f.mediaKind || null, file_kind: kinds.kind || null, is_exec: kinds.isExec ? 1 : 0, seen_at });
+  }
+  // update sizes for dirs explicitly
+  for (const [rel, d] of Object.entries(dirs)) updateDirSize(diskId, rel, d.size || 0);
+  // remove nodes not seen in this run
+  deleteNodesNotSeen(diskId, seen_at);
   buildingState.set(disk.name, false);
   return index;
 }
@@ -144,11 +180,6 @@ async function startWatchers() {
 }
 
 export async function startIndexingWorkers() {
-  // Try loading saved indices
-  for (const d of DISKS) {
-    const loaded = await loadIndex(d.name);
-    if (loaded) setIndex(d.name, loaded);
-  }
   await indexAll();
   await startWatchers();
 }
