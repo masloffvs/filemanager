@@ -4,7 +4,11 @@ import * as path from "path";
 import index from "./index.html";
 import { logger } from "./logger";
 import Walker from "./walker";
-import ConfigStore, { type SortKey, type SortOrder, type SortSpec } from "./config";
+import ConfigStore, {
+  type SortKey,
+  type SortOrder,
+  type SortSpec,
+} from "./config";
 
 // Config + Walker background service
 const config = new ConfigStore();
@@ -18,6 +22,16 @@ walker.init(config.get().indexRootPath);
     } catch (err) {
       logger.error("Walker error", { err: String(err) });
     }
+    // Touch first-index marker by appending 1 byte so UI knows indexing has run at least once
+    try {
+      const markerDir = path.resolve(".index");
+      const markerFile = path.join(markerDir, "firstindex");
+      if (!fs.existsSync(markerDir))
+        fs.mkdirSync(markerDir, { recursive: true });
+      fs.appendFileSync(markerFile, Buffer.from([1]));
+    } catch (e) {
+      logger.error("Failed to update firstindex marker", { error: String(e) });
+    }
     const interval = Math.max(1, Number(config.get().reindexIntervalSec || 10));
     await new Promise((res) => setTimeout(res, interval * 1000));
   }
@@ -28,8 +42,8 @@ let server = serve({
   port: Number(c0.serverPort || 3000),
   hostname: String(c0.serverHost || "127.0.0.1"),
   routes: {
-    // Serve index.html for all unmatched routes.
-    "/*": index,
+    "/": index,
+
     "/api/getSliceByIdOrPath": async (req) => {
       try {
         const url = new URL(req.url);
@@ -67,8 +81,13 @@ let server = serve({
                 .find((e) => e.parentId === null && e.type === "folder");
               if (!rootEntry) {
                 return new Response(
-                  JSON.stringify({ error: "Parent not found by path and root missing" }),
-                  { status: 404, headers: { "Content-Type": "application/json" } }
+                  JSON.stringify({
+                    error: "Parent not found by path and root missing",
+                  }),
+                  {
+                    status: 404,
+                    headers: { "Content-Type": "application/json" },
+                  }
                 );
               }
               parentId = rootEntry.id;
@@ -103,8 +122,12 @@ let server = serve({
     "/api/config": async (req) => {
       if (req.method === "GET") {
         const c = config.get();
-        const resolved = { ...c, resolvedIndexRootPath: path.resolve(c.indexRootPath) };
-        return new Response(JSON.stringify(resolved), {
+        const resolved = {
+          ...c,
+          resolvedIndexRootPath: path.resolve(c.indexRootPath),
+        };
+        const ready = fs.existsSync(path.resolve(".index/firstindex"));
+        return new Response(JSON.stringify({ ...resolved, ready }), {
           headers: { "Content-Type": "application/json" },
         });
       }
@@ -113,30 +136,39 @@ let server = serve({
           const body = await req.json();
           const prev = config.get();
           // Validate sort specs
-          const validKey = (k: any): k is SortKey => ["name","size","modified","created"].includes(String(k));
-          const validOrder = (o: any): o is SortOrder => ["asc","desc"].includes(String(o));
+          const validKey = (k: any): k is SortKey =>
+            ["name", "size", "modified", "created"].includes(String(k));
+          const validOrder = (o: any): o is SortOrder =>
+            ["asc", "desc"].includes(String(o));
           let folderSort: SortSpec | undefined;
-          if (body.folderSort && typeof body.folderSort === 'object') {
+          if (body.folderSort && typeof body.folderSort === "object") {
             const k = body.folderSort.key;
             const o = body.folderSort.order;
             if (validKey(k) && validOrder(o)) folderSort = { key: k, order: o };
           }
           let fileSort: SortSpec | undefined;
-          if (body.fileSort && typeof body.fileSort === 'object') {
+          if (body.fileSort && typeof body.fileSort === "object") {
             const k = body.fileSort.key;
             const o = body.fileSort.order;
             if (validKey(k) && validOrder(o)) fileSort = { key: k, order: o };
           }
-          const nextPort = Number.isFinite(Number(body.serverPort)) ? Number(body.serverPort) : prev.serverPort;
-          const nextHost = typeof body.serverHost === 'string' && body.serverHost.trim() !== '' ? String(body.serverHost) : prev.serverHost;
+          const nextPort = Number.isFinite(Number(body.serverPort))
+            ? Number(body.serverPort)
+            : prev.serverPort;
+          const nextHost =
+            typeof body.serverHost === "string" && body.serverHost.trim() !== ""
+              ? String(body.serverHost)
+              : prev.serverHost;
 
           const next = config.set({
             indexRootPath:
-              typeof body.indexRootPath === "string" && body.indexRootPath.trim() !== ""
+              typeof body.indexRootPath === "string" &&
+              body.indexRootPath.trim() !== ""
                 ? body.indexRootPath
                 : prev.indexRootPath,
             reindexIntervalSec:
-              Number.isFinite(Number(body.reindexIntervalSec)) && Number(body.reindexIntervalSec) > 0
+              Number.isFinite(Number(body.reindexIntervalSec)) &&
+              Number(body.reindexIntervalSec) > 0
                 ? Number(body.reindexIntervalSec)
                 : prev.reindexIntervalSec,
             ...(folderSort ? { folderSort } : {}),
@@ -147,7 +179,9 @@ let server = serve({
           if (next.indexRootPath !== prev.indexRootPath) {
             walker.init(next.indexRootPath);
           }
-          const requiresRestart = next.serverPort !== prev.serverPort || next.serverHost !== prev.serverHost;
+          const requiresRestart =
+            next.serverPort !== prev.serverPort ||
+            next.serverHost !== prev.serverHost;
           const payload = { ...next, requiresRestart };
           return new Response(JSON.stringify(payload), {
             headers: { "Content-Type": "application/json" },
@@ -182,7 +216,8 @@ let server = serve({
         const filename = entry.path.split(/[/\\]/).pop() || "download";
         return new Response(file, {
           headers: {
-            "Content-Type": entry.mimeType || file.type || "application/octet-stream",
+            "Content-Type":
+              entry.mimeType || file.type || "application/octet-stream",
             "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(
               filename
             )}`,
@@ -216,10 +251,13 @@ let server = serve({
         const file = Bun.file(entry.path);
         const stat = await fs.promises.stat(entry.path).catch(() => null);
         if (!stat) {
-          return new Response(JSON.stringify({ error: "File not accessible" }), {
-            status: 404,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ error: "File not accessible" }),
+            {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
         }
 
         const size = stat.size;
@@ -231,13 +269,23 @@ let server = serve({
         if (isVideo) {
           if (!range || !/^bytes=/.test(range)) {
             return new Response(
-              JSON.stringify({ error: "Range header required for video streaming" }),
-              { status: 400, headers: { "Content-Type": "application/json", "Accept-Ranges": "bytes" } }
+              JSON.stringify({
+                error: "Range header required for video streaming",
+              }),
+              {
+                status: 400,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Accept-Ranges": "bytes",
+                },
+              }
             );
           }
           const [startStr, endStr] = range.replace(/bytes=/i, "").split("-");
           let start = parseInt(startStr, 10);
-          let end = endStr ? parseInt(endStr, 10) : Math.min(start + 1_000_000, size - 1); // ~1MB chunks by default
+          let end = endStr
+            ? parseInt(endStr, 10)
+            : Math.min(start + 1_000_000, size - 1); // ~1MB chunks by default
           if (Number.isNaN(start) || start < 0) start = 0;
           if (Number.isNaN(end) || end >= size) end = size - 1;
           if (start > end) return new Response(null, { status: 416 });
@@ -293,10 +341,13 @@ let server = serve({
       try {
         const body = await req.json().catch(() => null);
         if (!body || (body.id == null && body.path == null)) {
-          return new Response(JSON.stringify({ error: "id or path required" }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ error: "id or path required" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
         }
         const target = body.id
           ? walker.db.getEntryById(String(body.id))
@@ -322,8 +373,10 @@ let server = serve({
 
         const updated = {
           ...target,
-          comment: body.hasOwnProperty("comment") ? body.comment ?? null : target.comment,
-          tags: body.hasOwnProperty("tags") ? (tags ?? null) : target.tags,
+          comment: body.hasOwnProperty("comment")
+            ? body.comment ?? null
+            : target.comment,
+          tags: body.hasOwnProperty("tags") ? tags ?? null : target.tags,
         };
         const saved = walker.db.updateEntry(updated);
         const result = { ...saved, fullPath: saved.path };
@@ -341,17 +394,25 @@ let server = serve({
       try {
         const url = new URL(req.url);
         const q = url.searchParams.get("q") || "";
-        const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 50)));
+        const limit = Math.min(
+          200,
+          Math.max(1, Number(url.searchParams.get("limit") || 50))
+        );
         const typeParam = url.searchParams.get("type") as
           | "file"
           | "folder"
           | "link"
           | null;
-        const type = typeParam === "file" || typeParam === "folder" || typeParam === "link" ? typeParam : undefined;
-        const results = walker.db.searchEntries(q, { type, limit }).map((e) => ({
-          ...e,
-          fullPath: e.path,
-        }));
+        const type =
+          typeParam === "file" || typeParam === "folder" || typeParam === "link"
+            ? typeParam
+            : undefined;
+        const results = walker.db
+          .searchEntries(q, { type, limit })
+          .map((e) => ({
+            ...e,
+            fullPath: e.path,
+          }));
         return new Response(JSON.stringify(results), {
           headers: { "Content-Type": "application/json" },
         });
@@ -366,7 +427,10 @@ let server = serve({
       try {
         const url = new URL(req.url);
         const q = url.searchParams.get("q") || "";
-        const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 50)));
+        const limit = Math.min(
+          200,
+          Math.max(1, Number(url.searchParams.get("limit") || 50))
+        );
         const cloud = walker.db.getTagCloud({ prefix: q || undefined, limit });
         return new Response(JSON.stringify(cloud), {
           headers: { "Content-Type": "application/json" },
@@ -395,13 +459,25 @@ let server = serve({
       try {
         const url = new URL(req.url);
         const mode = (url.searchParams.get("mode") || "merge").toLowerCase();
-        const typeParam = url.searchParams.get("type") as "file" | "folder" | "link" | null;
-        const type = typeParam === "file" || typeParam === "folder" || typeParam === "link" ? typeParam : undefined;
+        const typeParam = url.searchParams.get("type") as
+          | "file"
+          | "folder"
+          | "link"
+          | null;
+        const type =
+          typeParam === "file" || typeParam === "folder" || typeParam === "link"
+            ? typeParam
+            : undefined;
         const pathPrefix = url.searchParams.get("pathPrefix") || undefined;
-        const dryRun = (url.searchParams.get("dry") || "false").toLowerCase() === "true";
+        const dryRun =
+          (url.searchParams.get("dry") || "false").toLowerCase() === "true";
 
         const all = walker.db.listAll();
-        const targets = all.filter((e) => (!type || e.type === type) && (!pathPrefix || e.path.startsWith(pathPrefix)));
+        const targets = all.filter(
+          (e) =>
+            (!type || e.type === type) &&
+            (!pathPrefix || e.path.startsWith(pathPrefix))
+        );
         let updated = 0;
         let scanned = 0;
         for (const e of targets) {
@@ -419,7 +495,8 @@ let server = serve({
             for (const t of auto) if (!merged.includes(t)) merged.push(t);
             next = merged.length ? merged : null;
           }
-          const changed = JSON.stringify(existing) !== JSON.stringify(next || []);
+          const changed =
+            JSON.stringify(existing) !== JSON.stringify(next || []);
           if (changed && !dryRun) {
             walker.db.updateEntry({ ...e, tags: next });
             updated++;
@@ -427,9 +504,12 @@ let server = serve({
             updated++;
           }
         }
-        return new Response(JSON.stringify({ ok: true, mode, scanned, updated, dryRun }), {
-          headers: { "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ ok: true, mode, scanned, updated, dryRun }),
+          {
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       } catch (err) {
         return new Response(JSON.stringify({ ok: false, error: String(err) }), {
           status: 500,
