@@ -1,37 +1,72 @@
-import path from "path";
+import * as fs from "fs";
+import * as path from "path";
 
-export const STORAGE = path.resolve("./storage");
+export type SortKey = 'name' | 'size' | 'modified' | 'created';
+export type SortOrder = 'asc' | 'desc';
+export type SortSpec = { key: SortKey; order: SortOrder };
 
-// Security/config
-export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
-export const STRICT_MIME = false; // true => reject on MIME/ext mismatch
-export const FILENAME_MAX_LEN = 180;
+export type AppConfig = {
+  indexRootPath: string;
+  reindexIntervalSec: number;
+  folderSort: SortSpec;
+  fileSort: SortSpec;
+  serverPort: number;
+  serverHost: string;
+};
 
-// In-memory cache TTLs
-export const DIR_SIZE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const DEFAULT_CONFIG: AppConfig = {
+  indexRootPath: "./",
+  reindexIntervalSec: 10,
+  folderSort: { key: 'name', order: 'asc' },
+  fileSort: { key: 'name', order: 'asc' },
+  serverPort: 3000,
+  serverHost: "127.0.0.1",
+};
 
-export interface DiskConfig { name: string; path: string }
+export class ConfigStore {
+  private filePath: string;
+  private value: AppConfig = { ...DEFAULT_CONFIG };
 
-// Additional disks. You can edit this array or populate via env `EXTRA_DISKS=name1:/abs/path1,name2:/abs/path2`
-export const DISKS: DiskConfig[] = (() => {
-  const list: DiskConfig[] = [{ name: "storage", path: STORAGE }];
-  const extra = process.env.EXTRA_DISKS || "";
-  for (const item of extra.split(",").map((s) => s.trim()).filter(Boolean)) {
-    const [name, p] = item.split(":");
-    if (!name || !p) continue;
-    list.push({ name, path: path.resolve(p) });
+  constructor(filePath: string = ".index/config.json") {
+    this.filePath = filePath;
   }
-  return list;
-})();
 
-export const INDEX_DIR = path.resolve("./.index");
+  private ensurePath() {
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
 
-// Indexer parallelism (per disk)
-export const INDEX_CONCURRENCY = Math.max(1, parseInt(process.env.INDEX_CONCURRENCY || "3", 10) || 3);
+  load(): AppConfig {
+    try {
+      this.ensurePath();
+      if (fs.existsSync(this.filePath)) {
+        const text = fs.readFileSync(this.filePath, "utf8");
+        const parsed = JSON.parse(text);
+        this.value = { ...DEFAULT_CONFIG, ...parsed };
+      } else {
+        this.value = { ...DEFAULT_CONFIG };
+        this.save();
+      }
+    } catch {
+      this.value = { ...DEFAULT_CONFIG };
+    }
+    return this.value;
+  }
 
-// Backpressure: maximum queued directories awaiting scan
-export const INDEX_MAX_QUEUE = Math.max(100, parseInt(process.env.INDEX_MAX_QUEUE || "5000", 10) || 5000);
+  get(): AppConfig {
+    return this.value;
+  }
 
-// Snapshot cadence (ms) and batch sizes per snapshot
-export const INDEX_SNAPSHOT_MS = Math.max(100, parseInt(process.env.INDEX_SNAPSHOT_MS || "750", 10) || 750);
-export const INDEX_SNAPSHOT_BATCH = Math.max(100, parseInt(process.env.INDEX_SNAPSHOT_BATCH || "2000", 10) || 2000);
+  set(partial: Partial<AppConfig>): AppConfig {
+    this.value = { ...this.value, ...partial };
+    this.save();
+    return this.value;
+  }
+
+  save() {
+    this.ensurePath();
+    fs.writeFileSync(this.filePath, JSON.stringify(this.value, null, 2), "utf8");
+  }
+}
+
+export default ConfigStore;
