@@ -517,6 +517,43 @@ let server = serve({
         });
       }
     },
+    "/api/archiveList": async (req) => {
+      try {
+        const url = new URL(req.url);
+        const id = url.searchParams.get("id");
+        const pathParam = url.searchParams.get("path");
+
+        const entry = id
+          ? walker.db.getEntryById(id!)
+          : pathParam
+          ? walker.db.getEntryByPath(pathParam)
+          : null;
+        if (!entry || entry.type !== "file") {
+          return new Response(JSON.stringify({ error: "File not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const filePath = entry.path;
+        const lower = filePath.toLowerCase();
+        if (lower.endsWith('.zip')) {
+          const items = await listZipEntries(filePath);
+          return new Response(JSON.stringify({ type: 'zip', items }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        // TODO: add tar/tgz support
+        return new Response(
+          JSON.stringify({ error: "Unsupported archive type", hint: "Only .zip supported currently" }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err) }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    },
   },
 
   development: process.env.NODE_ENV !== "production" && {
@@ -529,3 +566,52 @@ let server = serve({
 });
 
 logger.info("Server running", { url: String(server.url) });
+
+// ---- Helpers ----
+async function listZipEntries(zipPath: string): Promise<Array<{ path: string; size: number; compressedSize: number; isDir: boolean }>> {
+  const fd = await fs.promises.open(zipPath, 'r');
+  try {
+    const stat = await fd.stat();
+    const size = stat.size;
+    const maxCommentLen = 0xFFFF; // per ZIP spec
+    const eocdMinSize = 22;
+    const readSize = Math.min(maxCommentLen + eocdMinSize, size);
+    const start = size - readSize;
+    const buf = Buffer.alloc(readSize);
+    await fd.read(buf, 0, readSize, start);
+    const sig = Buffer.from([0x50, 0x4b, 0x05, 0x06]); // EOCD
+    const eocdOffsetInBuf = buf.lastIndexOf(sig);
+    if (eocdOffsetInBuf < 0) throw new Error('ZIP EOCD not found');
+    const eocd = eocdOffsetInBuf;
+    const centralDirectorySize = buf.readUInt32LE(eocd + 12);
+    const centralDirectoryOffset = buf.readUInt32LE(eocd + 16);
+    // Read central directory
+    const cdbuf = Buffer.alloc(centralDirectorySize);
+    await fd.read(cdbuf, 0, centralDirectorySize, centralDirectoryOffset);
+    const entries: Array<{ path: string; size: number; compressedSize: number; isDir: boolean }> = [];
+    let p = 0;
+    const CEN_SIG = 0x02014b50;
+    while (p + 46 <= cdbuf.length) {
+      const sigVal = cdbuf.readUInt32LE(p);
+      if (sigVal !== CEN_SIG) break;
+      // parse fields
+      const compressedSize = cdbuf.readUInt32LE(p + 20);
+      const uncompressedSize = cdbuf.readUInt32LE(p + 24);
+      const fileNameLen = cdbuf.readUInt16LE(p + 28);
+      const extraLen = cdbuf.readUInt16LE(p + 30);
+      const commentLen = cdbuf.readUInt16LE(p + 32);
+      // const externalAttrs = cdbuf.readUInt32LE(p + 38);
+      const nameStart = p + 46;
+      const nameEnd = nameStart + fileNameLen;
+      const name = cdbuf.slice(nameStart, nameEnd).toString('utf8');
+      const isDir = name.endsWith('/') || name.endsWith('\\');
+      entries.push({ path: name.replace(/\\/g, '/'), size: uncompressedSize, compressedSize, isDir });
+      p = nameEnd + extraLen + commentLen; // advance to next header
+    }
+    // Sort entries by path
+    entries.sort((a, b) => a.path.localeCompare(b.path));
+    return entries;
+  } finally {
+    await fd.close();
+  }
+}

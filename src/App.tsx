@@ -347,6 +347,10 @@ export function App() {
   // Local copy of sort prefs for runtime sorting (must be declared before useMemo below)
   const [runtimeFolderSort, setRuntimeFolderSort] = useState<{key:'name'|'size'|'modified'|'created', order:'asc'|'desc'}>({key:'name',order:'asc'});
   const [runtimeFileSort, setRuntimeFileSort] = useState<{key:'name'|'size'|'modified'|'created', order:'asc'|'desc'}>({key:'name',order:'asc'});
+  const [archiveOpen, setArchiveOpen] = useState<boolean>(false);
+  const [archiveLoading, setArchiveLoading] = useState<boolean>(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveItems, setArchiveItems] = useState<Array<{ path: string; size: number; compressedSize: number; isDir: boolean }>>([]);
 
   // Get root folder from env or DB on mount
   useEffect(() => {
@@ -402,6 +406,81 @@ export function App() {
   const toTime = (s?: string | null) => (s ? Date.parse(s) || 0 : 0);
   const sortModified = (e: Entry) => toTime(e.meta?.lastModified);
   const sortCreated = (e: Entry) => toTime(e.meta?.created);
+
+  // Archive tree helpers
+  type ArchiveItem = { path: string; size: number; compressedSize: number; isDir: boolean };
+  type TreeNode = { name: string; path: string; isDir: boolean; size?: number; children?: Map<string, TreeNode> };
+  const [archiveExpanded, setArchiveExpanded] = useState<Record<string, boolean>>({});
+
+  const buildArchiveTree = (items: ArchiveItem[]): TreeNode => {
+    const root: TreeNode = { name: '', path: '', isDir: true, children: new Map() };
+    for (const it of items) {
+      const parts = it.path.replace(/\\/g, '/').split('/').filter(Boolean);
+      let cur = root;
+      for (let i = 0; i < parts.length; i++) {
+        const seg = parts[i];
+        const isLast = i === parts.length - 1;
+        const childPath = (cur.path ? cur.path + '/' : '') + seg;
+        if (!cur.children) cur.children = new Map();
+        let child = cur.children.get(seg);
+        if (!child) {
+          child = {
+            name: seg,
+            path: childPath,
+            isDir: isLast ? it.isDir : true,
+            size: isLast && !it.isDir ? it.size : undefined,
+            children: isLast && !it.isDir ? undefined : new Map(),
+          };
+          cur.children.set(seg, child);
+        } else if (isLast && !it.isDir) {
+          child.isDir = false;
+          child.size = it.size;
+        }
+        cur = child;
+      }
+    }
+    return root;
+  };
+
+  const ArchiveTree: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
+    if (!node.children || node.children.size === 0) return null as any;
+    const entries = Array.from(node.children.values()).sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return (
+      <ul>
+        {entries.map((n) => {
+          const hasKids = !!(n.children && n.children.size > 0);
+          const expanded = archiveExpanded[n.path] ?? true;
+          return (
+            <li key={n.path} className="px-3 py-0.5">
+              <div className="flex items-center">
+                <span style={{ width: depth * 12 }} />
+                {hasKids ? (
+                  <button
+                    className="mr-1 text-gray-600"
+                    onClick={() => setArchiveExpanded((m) => ({ ...m, [n.path]: !expanded }))}
+                    title={expanded ? 'Collapse' : 'Expand'}
+                  >
+                    {expanded ? '▼' : '▶'}
+                  </button>
+                ) : (
+                  <span className="mr-1 text-gray-400">•</span>
+                )}
+                <span className="mr-2 text-gray-500">{n.isDir ? '📁' : '📄'}</span>
+                <span className="truncate flex-1">{n.name}</span>
+                {!n.isDir && (
+                  <span className="ml-2 text-gray-400 tabular-nums">{humanSize(n.size || 0)}</span>
+                )}
+              </div>
+              {hasKids && expanded && <ArchiveTree node={n} depth={depth + 1} />}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
 
   const sortedEntries = React.useMemo(() => {
     const folders = entries.filter((e) => e.type === 'folder');
@@ -468,6 +547,11 @@ export function App() {
       setCommentDraft(selected.comment || "");
       setTagsDraft(Array.isArray(selected.tags) ? selected.tags.join(", ") : "");
       setSaveError(null);
+      // Reset archive preview state
+      setArchiveOpen(false);
+      setArchiveItems([]);
+      setArchiveError(null);
+      setArchiveLoading(false);
     }
   }, [selected]);
 
@@ -1213,26 +1297,70 @@ export function App() {
               </div>
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <a
-                className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
-                href={`/api/download?path=${encodeURIComponent(selected.fullPath)}`}
-              >
-                Download
-              </a>
-              <button
-                className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
-                onClick={() => setShowPreview((v) => !v)}
-              >
-                {showPreview ? "Hide Preview" : "Show Preview"}
-              </button>
-              <a
-                className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
-                target="_blank"
-                rel="noreferrer"
-                href={`/api/preview?path=${encodeURIComponent(selected.fullPath)}`}
-              >
-                Open Preview
-              </a>
+              {(() => {
+                const lower = (selected.fullPath || '').toLowerCase();
+                const mt = selected.mimeType || '';
+                const isImg = /^image\//.test(mt) || /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(lower);
+                const isVideo = /^video\//.test(mt) || /\.(mp4|mkv|mov|avi|webm|m4v)$/i.test(lower);
+                const isPdf = /pdf/i.test(mt) || /\.pdf$/i.test(lower);
+                const canInline = isImg || isVideo;
+                const canOpenTab = isImg || isPdf || /^text\//.test(mt);
+                return (
+                  <>
+                    <a
+                      className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+                      href={`/api/download?path=${encodeURIComponent(selected.fullPath)}`}
+                    >
+                      Download
+                    </a>
+                    {canInline && (
+                      <button
+                        className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+                        onClick={() => setShowPreview((v) => !v)}
+                      >
+                        {showPreview ? 'Hide Preview' : 'Show Preview'}
+                      </button>
+                    )}
+                    {/* Archive contents toggle */}
+                    {(/\.(zip)$/i.test(selected.fullPath) || /zip/.test(selected.mimeType || '')) && (
+                      <button
+                        className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+                        onClick={async () => {
+                          if (!archiveOpen) {
+                            try {
+                              setArchiveLoading(true);
+                              setArchiveError(null);
+                              const res = await fetch(`/api/archiveList?path=${encodeURIComponent(selected.fullPath)}`);
+                              const data = await res.json();
+                              if (!res.ok) throw new Error(data?.error || 'Failed to load');
+                              setArchiveItems(Array.isArray(data.items) ? data.items : []);
+                              setArchiveOpen(true);
+                            } catch (err: any) {
+                              setArchiveError(String(err?.message || err));
+                            } finally {
+                              setArchiveLoading(false);
+                            }
+                          } else {
+                            setArchiveOpen(false);
+                          }
+                        }}
+                      >
+                        {archiveOpen ? 'Hide Contents' : archiveLoading ? 'Loading…' : 'Show Contents'}
+                      </button>
+                    )}
+                    {canOpenTab && (
+                      <a
+                        className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+                        target="_blank"
+                        rel="noreferrer"
+                        href={`/api/preview?path=${encodeURIComponent(selected.fullPath)}`}
+                      >
+                        Open Preview
+                      </a>
+                    )}
+                  </>
+                );
+              })()}
               <button
                 className="ml-auto px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
                 disabled={saving}
@@ -1282,6 +1410,30 @@ export function App() {
                     No inline preview available for this type.
                   </div>
                 )}
+              </div>
+            )}
+            {archiveOpen && (
+              <div className="mt-3 border rounded bg-gray-50 overflow-hidden">
+                <div className="p-2 text-xs text-gray-600">Archive contents</div>
+                {archiveError && <div className="px-3 pb-2 text-xs text-red-600">{archiveError}</div>}
+                <div className="max-h-[50vh] overflow-auto">
+                  {archiveLoading ? (
+                    <div className="px-3 py-1 text-[11px] text-gray-500">Loading…</div>
+                  ) : archiveItems.length === 0 ? (
+                    <div className="px-3 py-1 text-[11px] text-gray-500">Empty archive or unsupported format.</div>
+                  ) : (
+                    <ul className="text-[11px] divide-y divide-gray-100">
+                      {archiveItems.map((it, i) => (
+                        <li key={i} className="px-3 py-0.5 flex items-center">
+                          <span className="truncate flex-1">{it.path}</span>
+                          {!it.isDir && (
+                            <span className="ml-2 text-gray-400 tabular-nums">{humanSize(it.size)}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
             )}
           </div>
