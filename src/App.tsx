@@ -8,11 +8,14 @@ const Pagination = lazy(() => import("./ui/Pagination"));
 const SearchModal = lazy(() => import("./ui/SearchModal"));
 const SettingsModal = lazy(() => import("./ui/SettingsModal"));
 const FileModal = lazy(() => import("./ui/FileModal"));
+const MassPasswordModal = lazy(() => import("./ui/MassPasswordModal"));
 
 import type { SettingsTab, SortKey, SortOrder } from "./ui/SettingsModal";
 
 export function App() {
   const [entries, setEntries] = useState<Entry[] | undefined>(undefined);
+  // Состояние для массового выделения
+  const [multiSelectedIds, setMultiSelectedIds] = useState<string[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("/");
   const [parentId, setParentId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -57,6 +60,14 @@ export function App() {
   const [autoMsg, setAutoMsg] = useState<string | null>(null);
   const [reloadBusy, setReloadBusy] = useState<boolean>(false);
   const [reloadMsg, setReloadMsg] = useState<string | null>(null);
+
+  // Mass password modal state
+  const [massPasswordOpen, setMassPasswordOpen] = useState<boolean>(false);
+  const [massPassword, setMassPassword] = useState<string>("");
+  const [massPasswordBusy, setMassPasswordBusy] = useState<boolean>(false);
+  const [massPasswordError, setMassPasswordError] = useState<string | null>(
+    null
+  );
 
   // Local copy of sort prefs for runtime sorting
   const [runtimeFolderSort, setRuntimeFolderSort] = useState<{
@@ -199,13 +210,26 @@ export function App() {
     return [...folders, ...rest];
   }, [entries, runtimeFolderSort, runtimeFileSort]);
 
-  const handleOpen = (entry: Entry) => {
+  // Обработка клика по файлу с поддержкой Ctrl/Shift
+  const handleOpen = (entry: Entry, event?: React.MouseEvent) => {
+    if (event && (event.ctrlKey || event.metaKey)) {
+      setMultiSelectedIds((prev) => {
+        if (prev.includes(entry.id)) {
+          return prev.filter((id) => id !== entry.id);
+        } else {
+          return [...prev, entry.id];
+        }
+      });
+      return;
+    }
     if (entry.type === "folder") {
       const relativePath = toRelativePath(entry.fullPath);
       window.history.pushState({}, "", relativePath);
       setCurrentPath(entry.fullPath);
+      setMultiSelectedIds([]);
     } else if (entry.type === "file") {
       setSelected(entry);
+      setMultiSelectedIds([]);
       const isImg = !!entry.mimeType && /^image\//.test(entry.mimeType);
       const isVideo = !!entry.mimeType && /^video\//.test(entry.mimeType);
       setShowPreview(isImg || isVideo);
@@ -282,10 +306,28 @@ export function App() {
           setSettingsOpen(true);
         }
       }
+
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        e.key.toLowerCase() === "l"
+      ) {
+        const target = e.target as HTMLElement | null;
+        const tag = (target?.tagName || "").toUpperCase();
+        const inEditable =
+          tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable;
+
+        if (!inEditable && multiSelectedIds.length > 0) {
+          e.preventDefault();
+          setMassPasswordOpen(true);
+          setMassPassword("");
+          setMassPasswordError(null);
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, finderOpen, settingsOpen]);
+  }, [selected, finderOpen, settingsOpen, multiSelectedIds]);
 
   const runSearch = async () => {
     const q = finderQuery.trim();
@@ -357,11 +399,23 @@ export function App() {
     })();
   }, [settingsOpen]);
 
-  const handleSelectEntry = (entry: Entry) => {
+  const handleSelectEntry = (entry: Entry, event?: React.MouseEvent) => {
+    if (event && (event.ctrlKey || event.metaKey)) {
+      setMultiSelectedIds((prev) => {
+        if (prev.includes(entry.id)) {
+          return prev.filter((id) => id !== entry.id);
+        } else {
+          return [...prev, entry.id];
+        }
+      });
+      return;
+    }
     if (entry.type === "folder") {
       handleNavigate(entry.fullPath);
+      setMultiSelectedIds([]);
     } else {
       setSelected(entry);
+      setMultiSelectedIds([]);
       const isImg = !!entry.mimeType && /^image\//.test(entry.mimeType);
       const isVideo = !!entry.mimeType && /^video\//.test(entry.mimeType);
       setShowPreview(isImg || isVideo);
@@ -504,6 +558,72 @@ export function App() {
     }
   };
 
+  const handleSetMassPassword = async () => {
+    if (!massPassword.trim() || multiSelectedIds.length === 0) return;
+
+    try {
+      setMassPasswordBusy(true);
+      setMassPasswordError(null);
+
+      // Get entries to process
+      const filesToProcess =
+        entries?.filter((e) => multiSelectedIds.includes(e.id)) || [];
+
+      // Process each file sequentially
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const file of filesToProcess) {
+        try {
+          const res = await fetch("/api/filePassword", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: file.id,
+              password: massPassword,
+            }),
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || "Failed to set password");
+          }
+          successCount++;
+        } catch (err) {
+          console.error(`Failed to set password for ${file.fullPath}:`, err);
+          errorCount++;
+        }
+      }
+
+      // Update entries to show password protection for successful ones
+      setEntries((prev) =>
+        prev
+          ? prev.map((e) =>
+              multiSelectedIds.includes(e.id)
+                ? { ...e, isPasswordProtected: true }
+                : e
+            )
+          : prev
+      );
+
+      if (errorCount > 0) {
+        setMassPasswordError(
+          `${successCount} files protected, ${errorCount} failed`
+        );
+      }
+
+      if (successCount > 0) {
+        setMassPasswordOpen(false);
+        setMultiSelectedIds([]);
+        setMassPassword("");
+      }
+    } catch (err: any) {
+      setMassPasswordError(String(err?.message || err));
+    } finally {
+      setMassPasswordBusy(false);
+    }
+  };
+
   // Pagination
   const totalPages = Math.ceil(sortedEntries.length / PAGE_SIZE);
 
@@ -519,6 +639,12 @@ export function App() {
           maxWidth: 480,
           minWidth: 0,
           background: "white",
+        }}
+        onClick={(e) => {
+          // Сброс выделения при клике вне файлов
+          if (e.target === e.currentTarget) {
+            setMultiSelectedIds([]);
+          }
         }}
       >
         <Suspense fallback={null}>
@@ -567,11 +693,13 @@ export function App() {
                     e.type !== "folder" &&
                     previousEntry &&
                     previousEntry.type === "folder";
+                  const isMultiSelected = multiSelectedIds.includes(e.id);
                   return (
                     <FileEntry
                       key={e.id}
                       entry={e}
                       isGroupStart={isGroupStart}
+                      isMultiSelected={isMultiSelected}
                       onClick={handleOpen}
                     />
                   );
@@ -662,6 +790,19 @@ export function App() {
           saving={saving}
           saveError={saveError}
           onSave={handleSave}
+        />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <MassPasswordModal
+          isOpen={massPasswordOpen}
+          onClose={() => setMassPasswordOpen(false)}
+          selectedCount={multiSelectedIds.length}
+          password={massPassword}
+          onPasswordChange={setMassPassword}
+          onSave={handleSetMassPassword}
+          saving={massPasswordBusy}
+          error={massPasswordError}
         />
       </Suspense>
 

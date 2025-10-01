@@ -6,20 +6,22 @@ import { humanSize } from "./types";
 interface FileEntryProps {
   entry: Entry;
   isGroupStart?: boolean;
-  onClick: (entry: Entry) => void;
+  isMultiSelected?: boolean;
+  onClick: (entry: Entry, event?: React.MouseEvent) => void;
 }
 
 export default function FileEntry({
   entry,
   isGroupStart = false,
+  isMultiSelected = false,
   onClick,
 }: FileEntryProps) {
   return (
     <li
       className={`flex items-center py-1 px-1 hover:bg-gray-50 transition ${
         entry.type === "folder" ? "cursor-pointer" : "cursor-default"
-      } ${isGroupStart ? "mt-2" : ""}`}
-      onClick={() => onClick(entry)}
+      } ${isGroupStart ? "mt-2" : ""} ${isMultiSelected ? "bg-blue-100" : ""}`}
+      onClick={(e) => onClick(entry, e)}
     >
       {getFileIcon(entry)}
       <span className="flex-1 truncate text-xs flex items-center gap-1">

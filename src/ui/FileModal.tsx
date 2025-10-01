@@ -182,68 +182,75 @@ export default function FileModal({
 
         {/* Password prompt state - replaces all modal content */}
         {showPasswordPrompt && !fileUnlocked ? (
-          <div className="py-4 text-center">
-            <div className="flex justify-center mb-4">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                className="w-8 h-8 text-gray-600"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M8 1a3.5 3.5 0 0 0-3.5 3.5V7A1.5 1.5 0 0 0 3 8.5v5A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 11.5 7V4.5A3.5 3.5 0 0 0 8 1Zm2 6V4.5a2 2 0 1 0-4 0V7h4Z"
-                  clipRule="evenodd"
-                />
-              </svg>
+          <div className="mt-3">
+            <div className="text-center py-4">
+              <div className="flex justify-center mb-3">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  className="size-6 text-gray-500"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M8 1a3.5 3.5 0 0 0-3.5 3.5V7A1.5 1.5 0 0 0 3 8.5v5A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 11.5 7V4.5A3.5 3.5 0 0 0 8 1Zm2 6V4.5a2 2 0 1 0-4 0V7h4Z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+
+              <div className="text-sm font-medium text-gray-700 mb-1">
+                Password protected file
+              </div>
+
+              <div className="text-xs text-gray-500 mb-3">
+                Enter password to continue
+              </div>
             </div>
 
-            <h3 className="text-base font-medium text-black mb-1">
-              Password protected file
-            </h3>
-
-            <p className="text-sm text-gray-600 mb-4">
-              Enter password to continue
-            </p>
-
             <div className="space-y-3">
-              <input
-                type="password"
-                className="w-full border border-gray-300 rounded p-2 text-sm focus:ring-1 focus:ring-blue-400 focus:border-blue-400 outline-none"
-                value={accessPassword}
-                onChange={(e) => setAccessPassword(e.target.value)}
-                placeholder="Enter password"
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    accessPassword &&
-                    !verifyingPassword
-                  ) {
-                    e.preventDefault();
-                    const unlockBtn = document.querySelector(
-                      '[data-action="unlock"]'
-                    ) as HTMLButtonElement;
-                    unlockBtn?.click();
-                  }
-                }}
-                autoFocus
-              />
+              <div>
+                <label className="block text-gray-500 mb-1 text-xs">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  className="w-full border rounded p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  value={accessPassword}
+                  onChange={(e) => setAccessPassword(e.target.value)}
+                  placeholder="Enter password"
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "Enter" &&
+                      accessPassword &&
+                      !verifyingPassword
+                    ) {
+                      e.preventDefault();
+                      const unlockBtn = document.querySelector(
+                        '[data-action="unlock"]'
+                      ) as HTMLButtonElement;
+                      unlockBtn?.click();
+                    }
+                  }}
+                  autoFocus
+                />
+              </div>
 
               {passwordError && (
-                <div className="text-xs text-red-600 text-center">
+                <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
                   {passwordError}
                 </div>
               )}
 
-              <div className="flex gap-2 pt-1">
+              <div className="flex justify-end gap-2 pt-2">
                 <button
-                  className="px-3 py-1.5 text-sm rounded border border-gray-300 text-black bg-white hover:bg-gray-50 flex-1"
+                  className="px-3 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
                   onClick={onClose}
                 >
                   Cancel
                 </button>
                 <button
-                  className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex-1"
+                  className="px-3 py-1 text-xs rounded border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 flex items-center"
                   disabled={verifyingPassword || !accessPassword}
                   data-action="unlock"
                   onClick={async () => {
@@ -277,7 +284,10 @@ export default function FileModal({
                     }
                   }}
                 >
-                  {verifyingPassword ? "Verifying..." : "Unlock"}
+                  {verifyingPassword && (
+                    <div className="animate-spin w-3 h-3 border border-gray-400 border-t-transparent rounded-full mr-1"></div>
+                  )}
+                  {verifyingPassword ? "Verifying…" : "Unlock"}
                 </button>
               </div>
             </div>
