@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import type { Entry } from "./types";
 import { getFileIcon } from "./FileIconUtils";
 import { humanSize } from "./types";
@@ -75,7 +75,8 @@ export default function FileModal({
       setArchiveLoading(false);
 
       // Load password protection state from entry or fetch it
-      setIsProtected(entry.isPasswordProtected || false);
+      const currentProtected = entry.isPasswordProtected || false;
+      setIsProtected(currentProtected);
       setPassword("");
       setConfirmPassword("");
       setProtectionError(null);
@@ -91,9 +92,17 @@ export default function FileModal({
         setShowPasswordPrompt(true);
       }
     }
-  }, [entry]);
+  }, [entry?.id, entry?.isPasswordProtected]);
 
   if (!entry) return null;
+
+  const handlePasswordChange = useCallback((value: string) => {
+    setPassword(value);
+  }, []);
+
+  const handleConfirmPasswordChange = useCallback((value: string) => {
+    setConfirmPassword(value);
+  }, []);
 
   const handleArchiveToggle = async () => {
     if (!archiveOpen && entry) {
@@ -456,11 +465,13 @@ export default function FileModal({
                           Password
                         </label>
                         <input
+                          key="password-input"
                           type="password"
                           className="w-full border rounded p-2 text-xs"
                           value={password}
-                          onChange={(e) => setPassword(e.target.value)}
+                          onChange={(e) => handlePasswordChange(e.target.value)}
                           placeholder="Enter password"
+                          autoComplete="new-password"
                         />
                       </div>
 
@@ -469,11 +480,15 @@ export default function FileModal({
                           Confirm Password
                         </label>
                         <input
+                          key="confirm-password-input"
                           type="password"
                           className="w-full border rounded p-2 text-xs"
                           value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          onChange={(e) =>
+                            handleConfirmPasswordChange(e.target.value)
+                          }
                           placeholder="Confirm password"
+                          autoComplete="new-password"
                         />
                       </div>
 
