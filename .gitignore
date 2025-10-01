@@ -1,0 +1,14 @@
+# Ignore storage folder
+storage/
+
+# Ignore .index file
+.index
+
+# Ignore JetBrains IDE settings
+.idea/
+
+# Ignore Bun.js dependencies
+bun.lockb
+
+# Ignore Node.js dependencies
+node_modules/
