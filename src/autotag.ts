@@ -17,7 +17,7 @@ function globToRegExp(glob: string, flags: string = "i"): RegExp {
     const ch = glob[i];
     if (ch === "*") pattern += ".*";
     else if (ch === "?") pattern += ".";
-    else pattern += esc(ch);
+    else pattern += esc(ch ?? "");
   }
   pattern += "$";
   return new RegExp(pattern, flags);
@@ -49,7 +49,7 @@ export class AutoTagger {
       if (!line || line.startsWith("#")) continue;
       // pattern[,pattern2]: [#tag, #tag2]  (allow trailing comments)
       const m = line.match(/^(.+?):\s*\[(.+?)\]\s*(?:#.*)?$/);
-      if (!m) continue;
+      if (!m || !m[1] || !m[2]) continue;
       const patterns = m[1]
         .split(",")
         .map((s) => s.trim())

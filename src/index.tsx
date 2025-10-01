@@ -42,7 +42,7 @@ let server = serve({
   port: Number(c0.serverPort || 3000),
   hostname: String(c0.serverHost || "127.0.0.1"),
   routes: {
-    "/": index,
+    "/*": index,
 
     "/api/getSliceByIdOrPath": async (req) => {
       try {
@@ -104,10 +104,12 @@ let server = serve({
           entries = walker.db.getChildren(parentId);
         }
 
-        // Rename "path" to "fullPath" in result for clarity
+        // Rename "path" to "fullPath" in result for clarity and add password protection info
         const result = entries.map((e) => ({
           ...e,
           fullPath: e.path,
+          isPasswordProtected:
+            e.type === "file" ? walker.db.hasFilePassword(e.id) : false,
         }));
 
         return new Response(JSON.stringify(result), {
@@ -200,6 +202,7 @@ let server = serve({
         const url = new URL(req.url);
         const id = url.searchParams.get("id");
         const pathParam = url.searchParams.get("path");
+        const password = url.searchParams.get("password"); // Password for protected files
 
         const entry = id
           ? walker.db.getEntryById(id)
@@ -212,6 +215,48 @@ let server = serve({
             headers: { "Content-Type": "application/json" },
           });
         }
+
+        // Check if file is password protected
+        if (walker.db.hasFilePassword(entry.id)) {
+          if (!password) {
+            return new Response(
+              JSON.stringify({
+                error: "Password required",
+                passwordRequired: true,
+              }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+
+          const passwordHash = walker.db.getFilePasswordHash(entry.id);
+          if (!passwordHash) {
+            return new Response(
+              JSON.stringify({ error: "Password verification failed" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+
+          const isValid = await Bun.password.verify(password, passwordHash);
+          if (!isValid) {
+            return new Response(
+              JSON.stringify({
+                error: "Invalid password",
+                passwordRequired: true,
+              }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+        }
+
         const file = Bun.file(entry.path);
         const filename = entry.path.split(/[/\\]/).pop() || "download";
         return new Response(file, {
@@ -235,6 +280,7 @@ let server = serve({
         const url = new URL(req.url);
         const id = url.searchParams.get("id");
         const pathParam = url.searchParams.get("path");
+        const password = url.searchParams.get("password"); // Password for protected files
 
         const entry = id
           ? walker.db.getEntryById(id)
@@ -246,6 +292,47 @@ let server = serve({
             status: 404,
             headers: { "Content-Type": "application/json" },
           });
+        }
+
+        // Check if file is password protected
+        if (walker.db.hasFilePassword(entry.id)) {
+          if (!password) {
+            return new Response(
+              JSON.stringify({
+                error: "Password required",
+                passwordRequired: true,
+              }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+
+          const passwordHash = walker.db.getFilePasswordHash(entry.id);
+          if (!passwordHash) {
+            return new Response(
+              JSON.stringify({ error: "Password verification failed" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+
+          const isValid = await Bun.password.verify(password, passwordHash);
+          if (!isValid) {
+            return new Response(
+              JSON.stringify({
+                error: "Invalid password",
+                passwordRequired: true,
+              }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
         }
 
         const file = Bun.file(entry.path);
@@ -379,7 +466,12 @@ let server = serve({
           tags: body.hasOwnProperty("tags") ? tags ?? null : target.tags,
         };
         const saved = walker.db.updateEntry(updated);
-        const result = { ...saved, fullPath: saved.path };
+        const result = {
+          ...saved,
+          fullPath: saved.path,
+          isPasswordProtected:
+            saved.type === "file" ? walker.db.hasFilePassword(saved.id) : false,
+        };
         return new Response(JSON.stringify(result), {
           headers: { "Content-Type": "application/json" },
         });
@@ -412,6 +504,8 @@ let server = serve({
           .map((e) => ({
             ...e,
             fullPath: e.path,
+            isPasswordProtected:
+              e.type === "file" ? walker.db.hasFilePassword(e.id) : false,
           }));
         return new Response(JSON.stringify(results), {
           headers: { "Content-Type": "application/json" },
@@ -536,17 +630,191 @@ let server = serve({
         }
         const filePath = entry.path;
         const lower = filePath.toLowerCase();
-        if (lower.endsWith('.zip')) {
+        if (lower.endsWith(".zip")) {
           const items = await listZipEntries(filePath);
-          return new Response(JSON.stringify({ type: 'zip', items }), {
+          return new Response(JSON.stringify({ type: "zip", items }), {
             headers: { "Content-Type": "application/json" },
           });
         }
         // TODO: add tar/tgz support
         return new Response(
-          JSON.stringify({ error: "Unsupported archive type", hint: "Only .zip supported currently" }),
+          JSON.stringify({
+            error: "Unsupported archive type",
+            hint: "Only .zip supported currently",
+          }),
           { status: 400, headers: { "Content-Type": "application/json" } }
         );
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err) }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    },
+    "/api/filePassword": async (req) => {
+      try {
+        if (req.method === "POST") {
+          // Set or update file password
+          const body = await req.json().catch(() => null);
+          if (!body || (!body.id && !body.path)) {
+            return new Response(
+              JSON.stringify({ error: "id or path required" }),
+              {
+                status: 400,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+
+          const entry = body.id
+            ? walker.db.getEntryById(String(body.id))
+            : walker.db.getEntryByPath(String(body.path));
+
+          if (!entry || entry.type !== "file") {
+            return new Response(JSON.stringify({ error: "File not found" }), {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          if (!body.password || typeof body.password !== "string") {
+            return new Response(
+              JSON.stringify({ error: "password required" }),
+              {
+                status: 400,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+
+          // Hash the password using Bun's built-in crypto
+          const passwordHash = await Bun.password.hash(body.password);
+
+          // Store password hash in database (assuming walker.db has a method for this)
+          walker.db.setFilePassword(entry.id, passwordHash);
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "Password set successfully",
+            }),
+            {
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        if (req.method === "GET") {
+          // Check if file has password protection
+          const url = new URL(req.url);
+          const id = url.searchParams.get("id");
+          const pathParam = url.searchParams.get("path");
+
+          const entry = id
+            ? walker.db.getEntryById(id)
+            : pathParam
+            ? walker.db.getEntryByPath(pathParam)
+            : null;
+
+          if (!entry || entry.type !== "file") {
+            return new Response(JSON.stringify({ error: "File not found" }), {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          const hasPassword = walker.db.hasFilePassword(entry.id);
+
+          return new Response(JSON.stringify({ hasPassword }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        if (req.method === "DELETE") {
+          // Remove file password protection
+          const url = new URL(req.url);
+          const id = url.searchParams.get("id");
+          const pathParam = url.searchParams.get("path");
+
+          const entry = id
+            ? walker.db.getEntryById(id)
+            : pathParam
+            ? walker.db.getEntryByPath(pathParam)
+            : null;
+
+          if (!entry || entry.type !== "file") {
+            return new Response(JSON.stringify({ error: "File not found" }), {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          walker.db.removeFilePassword(entry.id);
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "Password protection removed",
+            }),
+            {
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        return new Response("Method Not Allowed", { status: 405 });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err) }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    },
+    "/api/verifyPassword": async (req) => {
+      try {
+        if (req.method !== "POST") {
+          return new Response("Method Not Allowed", { status: 405 });
+        }
+
+        const body = await req.json().catch(() => null);
+        if (!body || (!body.id && !body.path) || !body.password) {
+          return new Response(
+            JSON.stringify({ error: "id/path and password required" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        const entry = body.id
+          ? walker.db.getEntryById(String(body.id))
+          : walker.db.getEntryByPath(String(body.path));
+
+        if (!entry || entry.type !== "file") {
+          return new Response(JSON.stringify({ error: "File not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        const passwordHash = walker.db.getFilePasswordHash(entry.id);
+        if (!passwordHash) {
+          return new Response(
+            JSON.stringify({ error: "File is not password protected" }),
+            {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        // Verify password using Bun's built-in crypto
+        const isValid = await Bun.password.verify(body.password, passwordHash);
+
+        return new Response(JSON.stringify({ valid: isValid }), {
+          headers: { "Content-Type": "application/json" },
+        });
       } catch (err) {
         return new Response(JSON.stringify({ error: String(err) }), {
           status: 500,
@@ -568,12 +836,16 @@ let server = serve({
 logger.info("Server running", { url: String(server.url) });
 
 // ---- Helpers ----
-async function listZipEntries(zipPath: string): Promise<Array<{ path: string; size: number; compressedSize: number; isDir: boolean }>> {
-  const fd = await fs.promises.open(zipPath, 'r');
+async function listZipEntries(
+  zipPath: string
+): Promise<
+  Array<{ path: string; size: number; compressedSize: number; isDir: boolean }>
+> {
+  const fd = await fs.promises.open(zipPath, "r");
   try {
     const stat = await fd.stat();
     const size = stat.size;
-    const maxCommentLen = 0xFFFF; // per ZIP spec
+    const maxCommentLen = 0xffff; // per ZIP spec
     const eocdMinSize = 22;
     const readSize = Math.min(maxCommentLen + eocdMinSize, size);
     const start = size - readSize;
@@ -581,14 +853,19 @@ async function listZipEntries(zipPath: string): Promise<Array<{ path: string; si
     await fd.read(buf, 0, readSize, start);
     const sig = Buffer.from([0x50, 0x4b, 0x05, 0x06]); // EOCD
     const eocdOffsetInBuf = buf.lastIndexOf(sig);
-    if (eocdOffsetInBuf < 0) throw new Error('ZIP EOCD not found');
+    if (eocdOffsetInBuf < 0) throw new Error("ZIP EOCD not found");
     const eocd = eocdOffsetInBuf;
     const centralDirectorySize = buf.readUInt32LE(eocd + 12);
     const centralDirectoryOffset = buf.readUInt32LE(eocd + 16);
     // Read central directory
     const cdbuf = Buffer.alloc(centralDirectorySize);
     await fd.read(cdbuf, 0, centralDirectorySize, centralDirectoryOffset);
-    const entries: Array<{ path: string; size: number; compressedSize: number; isDir: boolean }> = [];
+    const entries: Array<{
+      path: string;
+      size: number;
+      compressedSize: number;
+      isDir: boolean;
+    }> = [];
     let p = 0;
     const CEN_SIG = 0x02014b50;
     while (p + 46 <= cdbuf.length) {
@@ -603,9 +880,14 @@ async function listZipEntries(zipPath: string): Promise<Array<{ path: string; si
       // const externalAttrs = cdbuf.readUInt32LE(p + 38);
       const nameStart = p + 46;
       const nameEnd = nameStart + fileNameLen;
-      const name = cdbuf.slice(nameStart, nameEnd).toString('utf8');
-      const isDir = name.endsWith('/') || name.endsWith('\\');
-      entries.push({ path: name.replace(/\\/g, '/'), size: uncompressedSize, compressedSize, isDir });
+      const name = cdbuf.slice(nameStart, nameEnd).toString("utf8");
+      const isDir = name.endsWith("/") || name.endsWith("\\");
+      entries.push({
+        path: name.replace(/\\/g, "/"),
+        size: uncompressedSize,
+        compressedSize,
+        isDir,
+      });
       p = nameEnd + extraLen + commentLen; // advance to next header
     }
     // Sort entries by path

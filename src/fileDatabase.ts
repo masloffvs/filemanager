@@ -108,6 +108,12 @@ export class FileDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_entries_parent ON entries(parent_id);
       CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);
+
+      CREATE TABLE IF NOT EXISTS file_passwords (
+        file_id TEXT PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+        password_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
     `);
 
     // Migration: add tags column if missing
@@ -375,6 +381,47 @@ export class FileDatabase {
       .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
       .slice(0, limit);
     return out;
+  }
+
+  /** Set password hash for a file. */
+  setFilePassword(fileId: string, passwordHash: string): void {
+    if (!fileId || !passwordHash) {
+      throw new Error("fileId and passwordHash are required");
+    }
+    const stmt = this.db.query(`
+      INSERT OR REPLACE INTO file_passwords (file_id, password_hash, created_at)
+      VALUES ($fileId, $passwordHash, unixepoch())
+    `);
+    stmt.run({ fileId, passwordHash });
+  }
+
+  /** Check if file has password protection. */
+  hasFilePassword(fileId: string): boolean {
+    if (!fileId) return false;
+    const stmt = this.db.query(`
+      SELECT 1 FROM file_passwords WHERE file_id = $fileId
+    `);
+    const result = stmt.get({ fileId });
+    return !!result;
+  }
+
+  /** Get password hash for a file. */
+  getFilePasswordHash(fileId: string): string | null {
+    if (!fileId) return null;
+    const stmt = this.db.query(`
+      SELECT password_hash FROM file_passwords WHERE file_id = $fileId
+    `);
+    const result = stmt.get({ fileId }) as { password_hash: string } | undefined;
+    return result?.password_hash ?? null;
+  }
+
+  /** Remove password protection from a file. */
+  removeFilePassword(fileId: string): void {
+    if (!fileId) return;
+    const stmt = this.db.query(`
+      DELETE FROM file_passwords WHERE file_id = $fileId
+    `);
+    stmt.run({ fileId });
   }
 }
 
