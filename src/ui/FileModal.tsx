@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import type { Entry } from "./types";
 import { getFileIcon } from "./FileIconUtils";
 import { humanSize } from "./types";
@@ -10,6 +10,30 @@ type ArchiveItem = {
   compressedSize: number;
   isDir: boolean;
 };
+
+// Stable Spoiler component outside of render
+const Spoiler = ({
+  title,
+  isOpen,
+  onToggle,
+  children,
+}: {
+  title: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) => (
+  <div className="border-b border-gray-200 last:border-b-0">
+    <button
+      className="w-full flex items-center justify-between py-2 text-left text-sm font-medium text-gray-700 hover:text-gray-900 hover:underline"
+      onClick={onToggle}
+    >
+      <span>{title}</span>
+      <span className="ml-2 text-gray-400">{isOpen ? "−" : "+"}</span>
+    </button>
+    {isOpen && <div className="pb-3">{children}</div>}
+  </div>
+);
 
 interface FileModalProps {
   entry: Entry | null;
@@ -56,6 +80,7 @@ export default function FileModal({
   const [isProtected, setIsProtected] = useState(false);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [inputKey, setInputKey] = useState(0); // Key to force re-mount only when needed
   const [protectionSaving, setProtectionSaving] = useState(false);
   const [protectionError, setProtectionError] = useState<string | null>(null);
 
@@ -96,14 +121,6 @@ export default function FileModal({
 
   if (!entry) return null;
 
-  const handlePasswordChange = useCallback((value: string) => {
-    setPassword(value);
-  }, []);
-
-  const handleConfirmPasswordChange = useCallback((value: string) => {
-    setConfirmPassword(value);
-  }, []);
-
   const handleArchiveToggle = async () => {
     if (!archiveOpen && entry) {
       try {
@@ -137,30 +154,6 @@ export default function FileModal({
   const canOpenTab = isImg || isPdf || /^text\//.test(mt);
   const isArchive =
     /\.(zip)$/i.test(entry.fullPath) || /zip/.test(entry.mimeType || "");
-
-  // Spoiler component
-  const Spoiler = ({
-    title,
-    isOpen,
-    onToggle,
-    children,
-  }: {
-    title: string;
-    isOpen: boolean;
-    onToggle: () => void;
-    children: React.ReactNode;
-  }) => (
-    <div className="border-b border-gray-200 last:border-b-0">
-      <button
-        className="w-full flex items-center justify-between py-2 text-left text-sm font-medium text-gray-700 hover:text-gray-900 hover:underline"
-        onClick={onToggle}
-      >
-        <span>{title}</span>
-        <span className="ml-2 text-gray-400">{isOpen ? "−" : "+"}</span>
-      </button>
-      {isOpen && <div className="pb-3">{children}</div>}
-    </div>
-  );
 
   return (
     <div
@@ -465,11 +458,10 @@ export default function FileModal({
                           Password
                         </label>
                         <input
-                          key="password-input"
                           type="password"
                           className="w-full border rounded p-2 text-xs"
                           value={password}
-                          onChange={(e) => handlePasswordChange(e.target.value)}
+                          onChange={(e) => setPassword(e.target.value)}
                           placeholder="Enter password"
                           autoComplete="new-password"
                         />
@@ -480,13 +472,10 @@ export default function FileModal({
                           Confirm Password
                         </label>
                         <input
-                          key="confirm-password-input"
                           type="password"
                           className="w-full border rounded p-2 text-xs"
                           value={confirmPassword}
-                          onChange={(e) =>
-                            handleConfirmPasswordChange(e.target.value)
-                          }
+                          onChange={(e) => setConfirmPassword(e.target.value)}
                           placeholder="Confirm password"
                           autoComplete="new-password"
                         />
