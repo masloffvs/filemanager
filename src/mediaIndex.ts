@@ -75,8 +75,8 @@ export default class MediaIndex {
         thumbnailFastViewBase64JsonList: { type: "TEXT" },
         quality: { type: "TEXT", notNull: true },
         codec: { type: "TEXT", notNull: true },
-        frameRate: { type: "REAL", notNull: true },
-        aspectRatio: { type: "TEXT", notNull: true },
+        frameRate: { type: "REAL", notNull: false },
+        aspectRatio: { type: "TEXT", notNull: false },
       })
     );
 
