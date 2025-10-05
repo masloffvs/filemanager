@@ -83,3 +83,251 @@ select:disabled {
   color: #9ca3af; /* gray-400 */
   cursor: not-allowed;
 }
+
+/* Dark mode select styling */
+[data-theme="dark"] select:not([multiple]):not([size]) {
+  background-color: #0b0b0b; /* dark-600 */
+  border-color: #1b1b1b; /* dark-300 */
+  color: #e0e0e0; /* gray-200 */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%239ca3af' stroke-width='1.5'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+}
+
+[data-theme="dark"] select:not([multiple]):not([size]):hover {
+  border-color: #2e2e2e; /* dark-100 */
+}
+
+[data-theme="dark"] select:not([multiple]):not([size]):focus {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+  border-color: #93c5fd;
+}
+
+[data-theme="dark"] select:disabled {
+  background-color: #141414; /* dark-400 */
+  border-color: #1b1b1b; /* dark-300 */
+  color: #3a3a3a; /* dark-50 */
+}
+
+/* Input styling */
+input[type="text"], 
+input[type="search"], 
+input[type="email"], 
+input[type="password"], 
+input[type="number"],
+textarea {
+  background-color: #ffffff;
+  border: 1px solid #d1d5db;
+  color: #374151;
+}
+
+input[type="text"]:focus, 
+input[type="search"]:focus, 
+input[type="email"]:focus, 
+input[type="password"]:focus, 
+input[type="number"]:focus,
+textarea:focus {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+  border-color: #93c5fd;
+}
+
+/* Dark mode inputs */
+[data-theme="dark"] input[type="text"], 
+[data-theme="dark"] input[type="search"], 
+[data-theme="dark"] input[type="email"], 
+[data-theme="dark"] input[type="password"], 
+[data-theme="dark"] input[type="number"],
+[data-theme="dark"] textarea {
+  background-color: #070707; /* dark-700 */
+  border-color: #1b1b1b; /* dark-300 */
+  color: #e0e0e0;
+}
+
+[data-theme="dark"] input[type="text"]:focus, 
+[data-theme="dark"] input[type="search"]:focus, 
+[data-theme="dark"] input[type="email"]:focus, 
+[data-theme="dark"] input[type="password"]:focus, 
+[data-theme="dark"] input[type="number"]:focus,
+[data-theme="dark"] textarea:focus {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+  border-color: #93c5fd;
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.25rem;
+  background-color: #ffffff;
+  position: relative;
+  cursor: pointer;
+}
+
+input[type="checkbox"]:checked {
+  background-color: #3b82f6;
+  border-color: #3b82f6;
+}
+
+input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: -1px;
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+input[type="checkbox"]:focus {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+/* Dark mode checkbox */
+[data-theme="dark"] input[type="checkbox"] {
+  background-color: #0b0b0b; /* dark-600 */
+  border-color: #1b1b1b; /* dark-300 */
+}
+
+[data-theme="dark"] input[type="checkbox"]:checked {
+  background-color: #3b82f6;
+  border-color: #3b82f6;
+}
+
+[data-theme="dark"] input[type="checkbox"]:checked::after {
+  border-color: #ffffff;
+}
+
+/* Radio button styling */
+input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 50%;
+  background-color: #ffffff;
+  position: relative;
+  cursor: pointer;
+}
+
+input[type="radio"]:checked {
+  background-color: #3b82f6;
+  border-color: #3b82f6;
+}
+
+input[type="radio"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #ffffff;
+}
+
+input[type="radio"]:focus {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+/* Dark mode radio */
+[data-theme="dark"] input[type="radio"] {
+  background-color: #0b0b0b; /* dark-600 */
+  border-color: #1b1b1b; /* dark-300 */
+}
+
+[data-theme="dark"] input[type="radio"]:checked {
+  background-color: #3b82f6;
+  border-color: #3b82f6;
+}
+
+[data-theme="dark"] input[type="radio"]:checked::after {
+  background-color: #ffffff;
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  transition: background-color 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Dark mode scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Firefox scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+[data-theme="dark"] * {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+/* Optional: Hide scrollbar but keep functionality */
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+/* Auto-hide scrollbar - only show on hover */
+.scrollbar-auto-hide {
+  overflow: auto;
+}
+
+.scrollbar-auto-hide::-webkit-scrollbar {
+  width: 0px;
+  transition: width 0.2s ease;
+}
+
+.scrollbar-auto-hide:hover::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-auto-hide::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+}
+
+[data-theme="dark"] .scrollbar-auto-hide::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+}

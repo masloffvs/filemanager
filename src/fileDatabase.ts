@@ -324,6 +324,12 @@ export class FileDatabase {
     return (info?.changes ?? 0) > 0;
   }
 
+  countAll(): number {
+    const stmt = this.db.query(`SELECT COUNT(*) as cnt FROM entries`);
+    const row = stmt.get() as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
+  }
+
   /** List all entries (useful for debugging). */
   listAll(): Entry[] {
     const stmt = this.db.query(`SELECT * FROM entries ORDER BY path`);

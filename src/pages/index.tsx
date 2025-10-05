@@ -1,4 +1,10 @@
-import React, { Suspense, useEffect, useState } from "react";
+import React, {
+  Suspense,
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+} from "react";
 import type { Entry } from "../ui/types";
 import type { SettingsTab, SortKey, SortOrder } from "../ui/SettingsModal";
 
@@ -12,22 +18,83 @@ const PreviewFile = React.lazy(() => import("../ui/PreviewFile"));
 const FileActions = React.lazy(() => import("../ui/FileActions"));
 const FileMetadata = React.lazy(() => import("../ui/FileMetadata"));
 
+// Page size options
+const PAGE_SIZE_OPTIONS = [16, 32, 64, 100, 200] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
+
+// Loading component
+const LoadingSpinner = () => (
+  <div className="w-full py-8">
+    <div className="flex flex-col items-center justify-center p-4 w-full">
+      <div className="animate-spin w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full mb-3 dark:border-gray-600 dark:border-t-gray-400"></div>
+      <p className="text-gray-500 text-sm dark:text-gray-400">Loading...</p>
+    </div>
+  </div>
+);
+
+// Empty folder component
+const EmptyFolder = () => (
+  <div className="w-full">
+    <div className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl w-full dark:bg-dark-400">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 16 16"
+        fill="currentColor"
+        className="size-4 text-gray-400 mb-3"
+      >
+        <path d="M2 4a2 2 0 0 1 2-2h8a2 2 0 1 1 0 4H4a2 2 0 0 1-2-2ZM2 9.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 9.25ZM2.75 12.5a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Z" />
+      </svg>
+      <p className="text-gray-500 text-sm font-medium">This folder is empty</p>
+      <p className="text-gray-400 text-xs mt-0">No files or folders found</p>
+    </div>
+  </div>
+);
+
+// Page size selector component
+const PageSizeSelector = ({
+  pageSize,
+  onPageSizeChange,
+}: {
+  pageSize: PageSize;
+  onPageSizeChange: (size: PageSize) => void;
+}) => (
+  <div className="flex items-center gap-2">
+    <span className="text-xs text-gray-500 dark:text-gray-400">Show:</span>
+    <select
+      value={pageSize}
+      onChange={(e) => onPageSizeChange(Number(e.target.value) as PageSize)}
+      className="text-xs bg-white border border-gray-200 rounded px-2 py-1 dark:bg-dark-600 dark:border-dark-300 dark:text-gray-200"
+    >
+      {PAGE_SIZE_OPTIONS.map((size) => (
+        <option key={size} value={size}>
+          {size}
+        </option>
+      ))}
+    </select>
+  </div>
+);
+
 export default function HomePage() {
+  // State management
   const [entries, setEntries] = useState<Entry[] | undefined>(undefined);
-  // Состояние для массового выделения
   const [multiSelectedIds, setMultiSelectedIds] = useState<string[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("/");
   const [parentId, setParentId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(32);
   const [loading, setLoading] = useState<boolean>(true);
-  const PAGE_SIZE = 21;
   const [rootFolder, setRootFolder] = useState<string>("/");
   const [selected, setSelected] = useState<Entry | null>(null);
   const [showPreview, setShowPreview] = useState<boolean>(false);
+  const [previewFile, setPreviewFile] = useState<Entry | null>(null);
+
+  // Form states
   const [commentDraft, setCommentDraft] = useState<string>("");
   const [tagsDraft, setTagsDraft] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Search modal states
   const [finderOpen, setFinderOpen] = useState<boolean>(false);
   const [finderQuery, setFinderQuery] = useState<string>("");
   const [finderResults, setFinderResults] = useState<Entry[]>([]);
@@ -38,16 +105,23 @@ export default function HomePage() {
   >([]);
   const [finderTagsLoading, setFinderTagsLoading] = useState<boolean>(false);
 
-  // preview
-  const [previewFile, setPreviewFile] = useState<Entry | null>(null);
-
-  // Mass password modal state
+  // Mass password modal states
   const [massPasswordOpen, setMassPasswordOpen] = useState<boolean>(false);
   const [massPassword, setMassPassword] = useState<string>("");
   const [massPasswordBusy, setMassPasswordBusy] = useState<boolean>(false);
   const [massPasswordError, setMassPasswordError] = useState<string | null>(
     null
   );
+
+  // Sort states
+  const [runtimeFolderSort, setRuntimeFolderSort] = useState<{
+    key: SortKey;
+    order: SortOrder;
+  }>({ key: "name", order: "asc" });
+  const [runtimeFileSort, setRuntimeFileSort] = useState<{
+    key: SortKey;
+    order: SortOrder;
+  }>({ key: "name", order: "asc" });
 
   // Get root folder from env or DB on mount
   useEffect(() => {
@@ -85,35 +159,31 @@ export default function HomePage() {
       });
   }, []);
 
-  // Local copy of sort prefs for runtime sorting
-  const [runtimeFolderSort, setRuntimeFolderSort] = useState<{
-    key: SortKey;
-    order: SortOrder;
-  }>({ key: "name", order: "asc" });
-  const [runtimeFileSort, setRuntimeFileSort] = useState<{
-    key: SortKey;
-    order: SortOrder;
-  }>({ key: "name", order: "asc" });
-
   // Helper functions to convert between relative URL paths and absolute file paths
-  const toRelativePath = (absolutePath: string): string => {
-    if (!rootFolder || rootFolder === "/") return absolutePath;
-    if (absolutePath.startsWith(rootFolder)) {
-      const relative = absolutePath.slice(rootFolder.length);
-      return relative.startsWith("/") ? relative : "/" + relative;
-    }
-    return absolutePath;
-  };
+  const toRelativePath = useCallback(
+    (absolutePath: string): string => {
+      if (!rootFolder || rootFolder === "/") return absolutePath;
+      if (absolutePath.startsWith(rootFolder)) {
+        const relative = absolutePath.slice(rootFolder.length);
+        return relative.startsWith("/") ? relative : "/" + relative;
+      }
+      return absolutePath;
+    },
+    [rootFolder]
+  );
 
-  const toAbsolutePath = (relativePath: string): string => {
-    if (!rootFolder || rootFolder === "/" || relativePath === "/") {
-      return relativePath === "/" ? rootFolder : relativePath;
-    }
-    if (relativePath.startsWith("/")) {
-      return rootFolder + relativePath;
-    }
-    return rootFolder + "/" + relativePath;
-  };
+  const toAbsolutePath = useCallback(
+    (relativePath: string): string => {
+      if (!rootFolder || rootFolder === "/" || relativePath === "/") {
+        return relativePath === "/" ? rootFolder : relativePath;
+      }
+      if (relativePath.startsWith("/")) {
+        return rootFolder + relativePath;
+      }
+      return rootFolder + "/" + relativePath;
+    },
+    [rootFolder]
+  );
 
   useEffect(() => {
     setPage(0); // Reset page on path change
@@ -144,7 +214,7 @@ export default function HomePage() {
       });
   }, [currentPath]);
 
-  // Sorting helpers
+  // Sorting functions
   const sortName = (e: Entry) =>
     (e.fullPath.split("/").filter(Boolean).pop() || "").toLowerCase();
   const sortSize = (e: Entry) => Number(e.size ?? 0);
@@ -152,11 +222,11 @@ export default function HomePage() {
   const sortModified = (e: Entry) => toTime(e.meta?.lastModified);
   const sortCreated = (e: Entry) => toTime(e.meta?.created);
 
-  const sortedEntries = React.useMemo(() => {
+  const sortedEntries = useMemo(() => {
     if (!entries) return [];
 
     const folders = entries.filter((e) => e.type === "folder");
-    const rest = entries.filter((e) => e.type !== "folder");
+    const files = entries.filter((e) => e.type !== "folder");
 
     const sortBySpec = (
       arr: Entry[],
@@ -171,56 +241,82 @@ export default function HomePage() {
           ? sortModified
           : sortCreated;
       const mul = spec.order === "asc" ? 1 : -1;
-      arr.sort((a, b) => {
+
+      // Separate dotfiles from regular files
+      const regular = arr.filter((e) => !sortName(e).startsWith("."));
+      const dotfiles = arr.filter((e) => sortName(e).startsWith("."));
+
+      // Sort regular files
+      regular.sort((a, b) => {
         const av = keyFn(a);
         const bv = keyFn(b);
         if (av < bv) return -1 * mul;
         if (av > bv) return 1 * mul;
-        // tie-breaker: by name asc
         const an = sortName(a);
         const bn = sortName(b);
         if (an < bn) return -1;
         if (an > bn) return 1;
         return 0;
       });
+
+      // Sort dotfiles
+      dotfiles.sort((a, b) => {
+        const av = keyFn(a);
+        const bv = keyFn(b);
+        if (av < bv) return -1 * mul;
+        if (av > bv) return 1 * mul;
+        const an = sortName(a);
+        const bn = sortName(b);
+        if (an < bn) return -1;
+        if (an > bn) return 1;
+        return 0;
+      });
+
+      // Return regular files first, then dotfiles at the bottom
+      return [...regular, ...dotfiles];
     };
 
-    sortBySpec(folders, runtimeFolderSort);
-    sortBySpec(rest, runtimeFileSort);
-    return [...folders, ...rest];
+    const sortedFolders = sortBySpec(folders, runtimeFolderSort);
+    const sortedFiles = sortBySpec(files, runtimeFileSort);
+
+    return [...sortedFolders, ...sortedFiles];
   }, [entries, runtimeFolderSort, runtimeFileSort]);
 
   // Обработка клика по файлу с поддержкой Ctrl/Shift
-  const handleOpen = (entry: Entry, event?: React.MouseEvent) => {
-    if (event && (event.ctrlKey || event.metaKey)) {
-      setMultiSelectedIds((prev) => {
-        if (prev.includes(entry.id)) {
-          return prev.filter((id) => id !== entry.id);
-        } else {
-          return [...prev, entry.id];
-        }
-      });
-      return;
-    }
-    if (entry.type === "folder") {
-      const relativePath = toRelativePath(entry.fullPath);
-      window.history.pushState({}, "", relativePath);
-      setCurrentPath(entry.fullPath);
-      setMultiSelectedIds([]);
-    } else if (entry.type === "file") {
-      setSelected(entry);
-      setMultiSelectedIds([]);
-      const isImg = !!entry.mimeType && /^image\//.test(entry.mimeType);
-      const isVideo = !!entry.mimeType && /^video\//.test(entry.mimeType);
-      setShowPreview(isImg || isVideo);
-    }
-  };
+  const handleOpen = useCallback(
+    (entry: Entry, event?: React.MouseEvent) => {
+      if (event && (event.ctrlKey || event.metaKey)) {
+        setMultiSelectedIds((prev) =>
+          prev.includes(entry.id)
+            ? prev.filter((id) => id !== entry.id)
+            : [...prev, entry.id]
+        );
+        return;
+      }
+      if (entry.type === "folder") {
+        const relativePath = toRelativePath(entry.fullPath);
+        window.history.pushState({}, "", relativePath);
+        setCurrentPath(entry.fullPath);
+        setMultiSelectedIds([]);
+      } else if (entry.type === "file") {
+        setSelected(entry);
+        setMultiSelectedIds([]);
+        const isImg = !!entry.mimeType && /^image\//.test(entry.mimeType);
+        const isVideo = !!entry.mimeType && /^video\//.test(entry.mimeType);
+        setShowPreview(isImg || isVideo);
+      }
+    },
+    [toRelativePath]
+  );
 
-  const handleNavigate = (path: string) => {
-    const relativePath = toRelativePath(path);
-    window.history.pushState({}, "", relativePath);
-    setCurrentPath(path);
-  };
+  const handleNavigate = useCallback(
+    (path: string) => {
+      const relativePath = toRelativePath(path);
+      window.history.pushState({}, "", relativePath);
+      setCurrentPath(path);
+    },
+    [toRelativePath]
+  );
 
   // Browser navigation
   React.useEffect(() => {
@@ -410,88 +506,45 @@ export default function HomePage() {
     }
   };
 
-  // Pagination
-  const totalPages = Math.ceil(sortedEntries.length / PAGE_SIZE);
+  // Pagination calculation
+  const totalPages = Math.ceil(sortedEntries.length / pageSize);
 
   return (
-    <>
-      <div
-        id="app-main-files-overview"
-        className="w-full flex-grow flex-row flex h-full"
-      >
+    <div className="w-full flex h-full overflow-hidden">
+      {/* Main file listing area */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        {/* File listing with scroll - goes behind header */}
         <div
-          id="file-listing"
-          className="flex-grow overflow-hidden w-full overflow-auto"
+          className="absolute inset-0 overflow-y-auto px-2 pt-16 pb-4"
+          onClick={(e) => {
+            // Сброс выделения при клике вне файлов
+            if (e.target === e.currentTarget) {
+              setMultiSelectedIds([]);
+            }
+          }}
         >
-          <div className="p-2 w-full">
-            <div className="w-full h-10 justify-between items-center bg-gray-50 rounded overflow-hidden py-2 px-3 flex items-center dark:bg-dark-400">
+          {loading || entries === undefined ? (
+            <LoadingSpinner />
+          ) : sortedEntries.length === 0 ? (
+            <EmptyFolder />
+          ) : (
+            <ul className="space-y-1" role="list">
               <Suspense fallback={null}>
-                <Breadcrumbs
-                  rootFolder={rootFolder}
-                  currentPath={currentPath}
-                  onNavigate={handleNavigate}
-                />
-              </Suspense>
-              <Pagination
-                currentPage={page}
-                totalPages={totalPages}
-                onPageChange={setPage}
-              />
-            </div>
-          </div>
-          <div
-            className="mx-auto rounded p-2 h-full flex flex-col"
-            onClick={(e) => {
-              // Сброс выделения при клике вне файлов
-              if (e.target === e.currentTarget) {
-                setMultiSelectedIds([]);
-              }
-            }}
-          >
-            {loading || entries === undefined ? (
-              <div className="w-full py-8">
-                <div className="flex flex-col items-center justify-center p-4 w-full">
-                  <div className="animate-spin w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full mb-3 dark:border-gray-600 dark:border-t-gray-400"></div>
-                  <p className="text-gray-500 text-sm dark:text-gray-400">
-                    Loading...
-                  </p>
-                </div>
-              </div>
-            ) : sortedEntries.length === 0 ? (
-              <div className="w-full">
-                <div className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl w-full">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 16 16"
-                    fill="currentColor"
-                    className="size-4 text-gray-400 mb-3"
-                  >
-                    <path d="M2 4a2 2 0 0 1 2-2h8a2 2 0 1 1 0 4H4a2 2 0 0 1-2-2ZM2 9.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 9.25ZM2.75 12.5a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Z" />
-                  </svg>
-                  <p className="text-gray-500 text-sm font-medium">
-                    This folder is empty
-                  </p>
-                  <p className="text-gray-400 text-xs mt-0">
-                    No files or folders found
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <ul className="w-full flex-grow space-y-1" role="list">
-                <Suspense fallback={null}>
-                  {sortedEntries
-                    .slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-                    .map((e, idx, arr) => {
-                      const previousEntry = arr[idx - 1];
-                      const isGroupStart =
-                        idx > 0 &&
-                        e.type !== "folder" &&
-                        previousEntry &&
-                        previousEntry.type === "folder";
-                      const isMultiSelected = multiSelectedIds.includes(e.id);
-                      return (
+                {sortedEntries
+                  .slice(page * pageSize, (page + 1) * pageSize)
+                  .map((e, idx, arr) => {
+                    const previousEntry = arr[idx - 1];
+                    const isGroupStart =
+                      idx > 0 &&
+                      e.type !== "folder" &&
+                      previousEntry &&
+                      previousEntry.type === "folder";
+                    const isMultiSelected = multiSelectedIds.includes(e.id);
+                    const isDotfile = sortName(e).startsWith(".");
+
+                    return (
+                      <div key={e.id} className={isDotfile ? "opacity-50" : ""}>
                         <FileEntry
-                          key={e.id}
                           entry={e}
                           isGroupStart={isGroupStart}
                           isMultiSelected={isMultiSelected}
@@ -503,32 +556,98 @@ export default function HomePage() {
                             else handleOpen(it);
                           }}
                         />
-                      );
-                    })}
-                </Suspense>
-              </ul>
-            )}
-          </div>
+                      </div>
+                    );
+                  })}
+              </Suspense>
+            </ul>
+          )}
         </div>
 
-        {previewFile !== undefined && previewFile !== null && (
-          <div
-            id="file-details"
-            className="py-3 px-2 max-w-[300px] w-full bg-white h-full overflow-auto dark:bg-dark-700"
-          >
-            <div className="sticky top-0 bg-gray-50 p-2 mb-3 rounded-md dark:bg-dark-400 dark:border-dark-200">
-              <div className="rounded-[4px] min-h-[200px] border border-gray-200 overflow-hidden bg-gray-100 mb-4 dark:bg-dark-500 dark:border-dark-300">
-                {previewFile ? <PreviewFile file={previewFile} /> : null}
-              </div>
+        {/* Sticky header with breadcrumbs - frosted glass effect */}
+        <div className="absolute top-0 left-0 right-0 z-10 p-2">
+          <div className="w-full h-10 justify-between items-center bg-gray-50/80 backdrop-blur-sm rounded overflow-hidden py-2 px-3 flex dark:bg-dark-400/80 shadow-sm border border-white/20 dark:border-dark-300/20">
+            <Suspense fallback={null}>
+              <Breadcrumbs
+                rootFolder={rootFolder}
+                currentPath={currentPath}
+                onNavigate={handleNavigate}
+              />
+            </Suspense>
 
-              <FileMetadata file={previewFile} />
-
-              <FileActions file={previewFile} />
+            <div className="flex items-center gap-4">
+              <PageSizeSelector
+                pageSize={pageSize}
+                onPageSizeChange={setPageSize}
+              />
+              <Pagination
+                currentPage={page}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
             </div>
           </div>
-        )}
+        </div>
       </div>
 
+      {/* Preview panel with rounded background - no border separator */}
+      {previewFile && (
+        <div className="w-80 flex-shrink-0 p-3 flex flex-col">
+          <div className="bg-white dark:bg-dark-600 rounded-xl shadow-sm border border-gray-100 dark:border-dark-600 flex flex-col h-fit overflow-hidden">
+            <div className="p-3 border-b border-gray-100 dark:border-dark-600 flex-shrink-0">
+              <button
+                title="Close preview"
+                type="button"
+                onClick={() => setPreviewFile(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 float-right"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 pr-8 truncate">
+                {previewFile.fullPath.split("/").pop()}
+              </h3>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3">
+              <div className="space-y-4">
+                <div className="rounded border border-gray-200 overflow-hidden bg-gray-100 min-h-[200px] dark:bg-dark-500 dark:border-dark-300">
+                  <Suspense
+                    fallback={
+                      <div className="h-48 flex items-center justify-center">
+                        Loading preview...
+                      </div>
+                    }
+                  >
+                    <PreviewFile file={previewFile} />
+                  </Suspense>
+                </div>
+
+                <Suspense fallback={null}>
+                  <FileMetadata file={previewFile} />
+                </Suspense>
+
+                <Suspense fallback={null}>
+                  <FileActions file={previewFile} />
+                </Suspense>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modals */}
       <Suspense fallback={null}>
         <SearchModal
           isOpen={finderOpen}
@@ -573,6 +692,6 @@ export default function HomePage() {
           error={massPasswordError}
         />
       </Suspense>
-    </>
+    </div>
   );
 }

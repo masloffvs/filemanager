@@ -97,13 +97,13 @@ export default function MediaVideoCard({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       aria-label={`Media item with video about '${media.videoEntry?.title}'`}
-      className="flex flex-col items-center gap-2 bg-gray-100 p-2 rounded dark:bg-dark-400 hover:dark:border-dark-100 border-transparent border cursor-pointer"
+      className="relative cursor-pointer group rounded-[15px] border dark:border-dark-300 overflow-hidden"
     >
       <div className="w-full select-none h-[200px] overflow-hidden bg-black flex items-center justify-center relative">
         <img
           id={`media-video-frame-blur-${media.id}`}
           alt=""
-          className="h-[200px]  w-full object-cover opacity-20 blur-md w-full z-10"
+          className="h-[200px] w-full object-cover opacity-20 blur-md w-full z-10"
           data-current-frame={currentFrame?.timestamp || 0}
           src={currentFrame?.frameBase64 || media.videoEntry?.thumbnailBase64}
         />
@@ -115,13 +115,18 @@ export default function MediaVideoCard({
           className="h-full object-cover absolute z-30"
           src={currentFrame?.frameBase64 || media.videoEntry?.thumbnailBase64}
         />
-      </div>
 
-      <div className="w-full flex flex-col items-start justify-start text-left">
-        <h6 className="text-white">{media.videoEntry?.title || "Untitled"}</h6>
-        <p className="text-gray-500 text-[10px]">
-          {frames.length} {currentFrame?.timestamp}
-        </p>
+        {/* Text overlay at bottom */}
+        <div className="absolute bottom-0 left-0 right-0 z-40 bg-black/60 backdrop-blur-sm p-2">
+          <h6 className="text-white text-sm font-medium truncate">
+            {media.videoEntry?.title || "Untitled"}
+          </h6>
+          <p className="text-gray-300 text-xs opacity-75">
+            {frames.length > 0 && `${frames.length} frames`}
+            {currentFrame?.timestamp &&
+              ` • ${Math.round(currentFrame.timestamp)}s`}
+          </p>
+        </div>
       </div>
     </div>
   );
