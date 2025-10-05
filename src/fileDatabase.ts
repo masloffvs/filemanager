@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import * as fs from "fs";
 import * as path from "path";
+import crypto from "crypto";
 
 export type EntryType = "file" | "link" | "folder";
 
@@ -118,9 +119,9 @@ export class FileDatabase {
 
     // Migration: add tags column if missing
     try {
-      const cols = this.db
-        .query("PRAGMA table_info(entries)")
-        .all() as Array<{ name: string }>;
+      const cols = this.db.query("PRAGMA table_info(entries)").all() as Array<{
+        name: string;
+      }>;
       const hasTags = cols.some((c) => c.name === "tags");
       if (!hasTags) {
         this.db.exec("ALTER TABLE entries ADD COLUMN tags TEXT NULL");
@@ -210,10 +211,17 @@ export class FileDatabase {
       throw new Error('Missing or invalid parameter "id"');
     }
     // Validate fields similar to create
-    if (!entry.path || typeof entry.path !== "string" || !isAbsolutePath(entry.path)) {
+    if (
+      !entry.path ||
+      typeof entry.path !== "string" ||
+      !isAbsolutePath(entry.path)
+    ) {
       throw new Error(`Path must be absolute: ${entry.path}`);
     }
-    if (entry.size != null && (!Number.isFinite(entry.size) || entry.size < 0)) {
+    if (
+      entry.size != null &&
+      (!Number.isFinite(entry.size) || entry.size < 0)
+    ) {
       throw new Error(`Size must be a non-negative number or null`);
     }
     if (entry.parentId) {
@@ -282,6 +290,11 @@ export class FileDatabase {
       `SELECT * FROM entries WHERE parent_id = $pid ORDER BY path`
     );
     return (stmt.all({ pid: parentId }) as any[]).map(fromRow);
+  }
+
+  getEveryFile(): Entry[] {
+    const stmt = this.db.query(`SELECT * FROM entries WHERE type = 'file'`);
+    return (stmt.all() as any[]).map(fromRow);
   }
 
   /** Recursively collect all descendants (children, grandchildren, ...). */
@@ -358,7 +371,10 @@ export class FileDatabase {
   }
 
   /** Return a tag cloud: list of { tag, count } sorted by count desc. */
-  getTagCloud(opts?: { limit?: number; prefix?: string }): Array<{ tag: string; count: number }> {
+  getTagCloud(opts?: {
+    limit?: number;
+    prefix?: string;
+  }): Array<{ tag: string; count: number }> {
     const limit = Math.max(1, Math.min(1000, opts?.limit ?? 50));
     const rows = this.db
       .query(`SELECT tags FROM entries WHERE tags IS NOT NULL`)
@@ -411,7 +427,9 @@ export class FileDatabase {
     const stmt = this.db.query(`
       SELECT password_hash FROM file_passwords WHERE file_id = $fileId
     `);
-    const result = stmt.get({ fileId }) as { password_hash: string } | undefined;
+    const result = stmt.get({ fileId }) as
+      | { password_hash: string }
+      | undefined;
     return result?.password_hash ?? null;
   }
 
@@ -422,6 +440,14 @@ export class FileDatabase {
       DELETE FROM file_passwords WHERE file_id = $fileId
     `);
     stmt.run({ fileId });
+  }
+
+  /** Verify password for a file. */
+  async verifyFilePassword(fileId: string, password: string): Promise<boolean> {
+    if (!fileId || !password) return false;
+    const hash = this.getFilePasswordHash(fileId);
+    if (!hash) return false;
+    return await Bun.password.verify(password, hash);
   }
 }
 

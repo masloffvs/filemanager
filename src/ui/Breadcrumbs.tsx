@@ -33,9 +33,9 @@ export default function Breadcrumbs({
   };
 
   return (
-    <div className="flex items-center mb-1 flex-wrap gap-1">
+    <div className="flex items-center flex-wrap gap-1">
       <span
-        className="text-gray-700 hover:underline hover:text-gray-900 cursor-pointer text-xs"
+        className="text-gray-700 hover:underline hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-200 cursor-pointer text-xs"
         onClick={() => onNavigate(rootFolder)}
       >
         root
@@ -44,7 +44,7 @@ export default function Breadcrumbs({
         <React.Fragment key={idx}>
           <span className="text-gray-400 text-xs">/</span>
           <span
-            className="text-gray-700 hover:underline hover:text-gray-900 cursor-pointer text-xs"
+            className="text-gray-700 hover:underline hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-200 cursor-pointer text-xs"
             onClick={() => handleBreadcrumb(idx)}
           >
             {seg}

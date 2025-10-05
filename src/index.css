@@ -1,11 +1,51 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@theme {
+  --color-dark-50:  #3a3a3a;  /* светло-графитовый, почти серый */
+  --color-dark-100: #2e2e2e;  /* мокрый асфальт */
+  --color-dark-200: #242424;  /* плотный уголь */
+  --color-dark-300: #1b1b1b;  /* свежий битум */
+  --color-dark-400: #141414;  /* глубокий чёрный */
+  --color-dark-500: #0f0f0f;  /* нейтральный базовый чёрный */
+  --color-dark-600: #0b0b0b;  /* мягкая тень */
+  --color-dark-700: #070707;  /* почти абсолютный чёрный */
+  --color-dark-800: #040404;  /* ближе к бездне */
+  --color-dark-900: #010101;  /* абсолютная тьма */
+  --color-dark:     #0a0a0a;  /* комфортный рабочий фон */
+}
+
+
+
 body,
 html,
 * {
-  font-family: "Work Sans", sans-serif;
   font-optical-sizing: auto;
   font-style: normal;
+}
+
+:root {
+  --bg-color: #ffffff;
+  --text-color: #000000;
+  --border-color: #d1d5db;
+}
+
+/*dark mode basics*/
+[data-theme="dark"] {
+
+  --bg-color: #121212;
+  --text-color: #e0e0e0;
+  --border-color: #333333;
+}
+
+body, html {
+  background-color: var(--bg-color, #ffffff);
+  color: var(--text-color, #000000);
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Google Sans", "Work Sans", "Helvetica Neue", "Roboto", sans-serif;
 }
 
 /* Styled <select> controls (single-select) */

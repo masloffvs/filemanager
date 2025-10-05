@@ -7,20 +7,39 @@ const levelOrder: Record<LogLevel, number> = {
   ERROR: 40,
 };
 
+const colors = {
+  DEBUG: "\x1b[90m", // Gray
+  INFO: "", // Default
+  WARN: "\x1b[33m", // Orange/Yellow
+  ERROR: "\x1b[31m", // Red
+  RESET: "\x1b[0m", // Reset
+  BOLD: "\x1b[1m", // Bold
+};
+
 function formatValue(value: unknown): string {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  if (value instanceof Date) return value.toISOString();
-  if (value instanceof Error) return value.message || String(value);
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "object") {
+  let formattedValue: string;
+
+  if (value === null) formattedValue = "null";
+  else if (value === undefined) formattedValue = "undefined";
+  else if (value instanceof Date) formattedValue = value.toISOString();
+  else if (value instanceof Error)
+    formattedValue = value.message || String(value);
+  else if (typeof value === "bigint") formattedValue = value.toString();
+  else if (typeof value === "object") {
     try {
-      return JSON.stringify(value);
+      formattedValue = JSON.stringify(value);
     } catch {
-      return String(value);
+      formattedValue = String(value);
     }
+  } else {
+    formattedValue = String(value);
   }
-  return String(value);
+
+  return `${colors.BOLD}${formattedValue}${colors.RESET}`;
+}
+
+function colorize(level: LogLevel, text: string): string {
+  return `${colors[level]}${text}${colors.RESET}`;
 }
 
 export interface LoggerOptions {
@@ -31,7 +50,9 @@ export class Logger {
   private level: LogLevel;
 
   constructor(options: LoggerOptions = {}) {
-    this.level = options.level ?? "INFO";
+    this.level =
+      options.level ??
+      (process.env.NODE_ENV === "production" ? "INFO" : "DEBUG");
   }
 
   setLevel(level: LogLevel) {
@@ -42,7 +63,11 @@ export class Logger {
     return levelOrder[level] >= levelOrder[this.level];
   }
 
-  private emit(level: LogLevel, message: string, meta?: Record<string, unknown>) {
+  private emit(
+    level: LogLevel,
+    message: string,
+    meta?: Record<string, unknown>
+  ) {
     if (!this.shouldLog(level)) return;
 
     const time = new Date().toISOString();
@@ -56,24 +81,32 @@ export class Logger {
       ? `[${time}] [${level}] ${message} ${pairs}`
       : `[${time}] [${level}] ${message}`;
 
+    const coloredLine = colorize(level, line);
+
     switch (level) {
       case "DEBUG":
-        console.debug(line);
+        if (process.env.NODE_ENV !== "production") {
+          console.log(coloredLine);
+        }
         break;
       case "INFO":
-        console.info(line);
+        console.log(coloredLine);
         break;
       case "WARN":
-        console.warn(line);
+        console.log(coloredLine);
         break;
       case "ERROR":
-        console.error(line);
+        console.log(coloredLine);
         break;
     }
   }
 
   log(level: LogLevel, message: string, meta?: Record<string, unknown>) {
-    this.emit(level, message, meta);
+    if (["DEBUG", "INFO", "WARN", "ERROR"].includes(level)) {
+      this.emit(level, message, meta);
+    } else {
+      throw new Error(`Invalid log level: ${level}`);
+    }
   }
 
   debug(message: string, meta?: Record<string, unknown>) {
@@ -94,4 +127,3 @@ export class Logger {
 }
 
 export const logger = new Logger();
-

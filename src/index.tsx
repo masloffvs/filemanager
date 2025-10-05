@@ -10,11 +10,30 @@ import ConfigStore, {
   type SortSpec,
 } from "./config";
 
+import { requestApiMetadata } from "./api/api_metadata";
+import { requestApiSimpleDownload } from "./api/api_simpleDownlaod";
+import { requestApiPreview } from "./api/api_preview";
+import { requestApiSearch } from "./api/api_search";
+import MediaIndex from "./mediaIndex";
+import { requestApiMediaSlice } from "./api/api_mediaSlice";
+import { requestApiGetMedia } from "./api/api_getMedia";
+import { requestApiGetMediaFrames } from "./api/api_getMediaFrames";
+import requestApiMediaStream from "./api/api_streamMedia";
+
 // Config + Walker background service
 const config = new ConfigStore();
 config.load();
-const walker = new Walker();
+export const walker = new Walker(undefined, config.get());
 walker.init(config.get().indexRootPath);
+
+let server = serve({
+  routes: {
+    "/*": () => new Response("Server starting..."),
+  },
+  port: Number(config.get().serverPort || 3000),
+  hostname: String(config.get().serverHost || "127.0.0.1"),
+});
+
 (async () => {
   while (true) {
     try {
@@ -37,12 +56,57 @@ walker.init(config.get().indexRootPath);
   }
 })();
 
+export const mediaIndex = new MediaIndex(walker);
+await mediaIndex.entrypoint();
+
 const c0 = config.get();
-let server = serve({
+
+server.stop();
+
+server = serve({
   port: Number(c0.serverPort || 3000),
   hostname: String(c0.serverHost || "127.0.0.1"),
   routes: {
     "/*": index,
+
+    "/api/generate100mb": () => {
+      // 100 MiB = 104857600 bytes
+      const size = 100 * 1024 * 1024;
+      // Bun supports streaming responses
+      const stream = new ReadableStream({
+        start(controller) {
+          const chunkSize = 64 * 1024; // 64 KiB
+          let sent = 0;
+          // Fill chunk with zeros (or any pattern)
+          const chunk = new Uint8Array(chunkSize);
+          function push() {
+            if (sent >= size) {
+              controller.close();
+              return;
+            }
+            const remaining = size - sent;
+            const toSend = remaining >= chunkSize ? chunkSize : remaining;
+            controller.enqueue(chunk.subarray(0, toSend));
+            sent += toSend;
+            // Use setTimeout to avoid blocking event loop
+            setTimeout(push, 0);
+          }
+          push();
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(size),
+          "Content-Disposition": 'attachment; filename="generated_100mb.bin"',
+        },
+      });
+    },
+
+    "/api/media/frames": requestApiGetMediaFrames,
+    "/api/media/slice": requestApiMediaSlice,
+    "/api/media/get": requestApiGetMedia,
+    "/api/media/stream": requestApiMediaStream,
 
     "/api/getSliceByIdOrPath": async (req) => {
       try {
@@ -197,233 +261,9 @@ let server = serve({
       }
       return new Response("Method Not Allowed", { status: 405 });
     },
-    "/api/download": async (req) => {
-      try {
-        const url = new URL(req.url);
-        const id = url.searchParams.get("id");
-        const pathParam = url.searchParams.get("path");
-        const password = url.searchParams.get("password"); // Password for protected files
-
-        const entry = id
-          ? walker.db.getEntryById(id)
-          : pathParam
-          ? walker.db.getEntryByPath(pathParam)
-          : null;
-        if (!entry || entry.type !== "file") {
-          return new Response(JSON.stringify({ error: "File not found" }), {
-            status: 404,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-
-        // Check if file is password protected
-        if (walker.db.hasFilePassword(entry.id)) {
-          if (!password) {
-            return new Response(
-              JSON.stringify({
-                error: "Password required",
-                passwordRequired: true,
-              }),
-              {
-                status: 401,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
-
-          const passwordHash = walker.db.getFilePasswordHash(entry.id);
-          if (!passwordHash) {
-            return new Response(
-              JSON.stringify({ error: "Password verification failed" }),
-              {
-                status: 500,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
-
-          const isValid = await Bun.password.verify(password, passwordHash);
-          if (!isValid) {
-            return new Response(
-              JSON.stringify({
-                error: "Invalid password",
-                passwordRequired: true,
-              }),
-              {
-                status: 401,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
-        }
-
-        const file = Bun.file(entry.path);
-        const filename = entry.path.split(/[/\\]/).pop() || "download";
-        return new Response(file, {
-          headers: {
-            "Content-Type":
-              entry.mimeType || file.type || "application/octet-stream",
-            "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(
-              filename
-            )}`,
-          },
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({ error: String(err) }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    },
-    "/api/preview": async (req) => {
-      try {
-        const url = new URL(req.url);
-        const id = url.searchParams.get("id");
-        const pathParam = url.searchParams.get("path");
-        const password = url.searchParams.get("password"); // Password for protected files
-
-        const entry = id
-          ? walker.db.getEntryById(id)
-          : pathParam
-          ? walker.db.getEntryByPath(pathParam)
-          : null;
-        if (!entry || entry.type !== "file") {
-          return new Response(JSON.stringify({ error: "File not found" }), {
-            status: 404,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-
-        // Check if file is password protected
-        if (walker.db.hasFilePassword(entry.id)) {
-          if (!password) {
-            return new Response(
-              JSON.stringify({
-                error: "Password required",
-                passwordRequired: true,
-              }),
-              {
-                status: 401,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
-
-          const passwordHash = walker.db.getFilePasswordHash(entry.id);
-          if (!passwordHash) {
-            return new Response(
-              JSON.stringify({ error: "Password verification failed" }),
-              {
-                status: 500,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
-
-          const isValid = await Bun.password.verify(password, passwordHash);
-          if (!isValid) {
-            return new Response(
-              JSON.stringify({
-                error: "Invalid password",
-                passwordRequired: true,
-              }),
-              {
-                status: 401,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
-        }
-
-        const file = Bun.file(entry.path);
-        const stat = await fs.promises.stat(entry.path).catch(() => null);
-        if (!stat) {
-          return new Response(
-            JSON.stringify({ error: "File not accessible" }),
-            {
-              status: 404,
-              headers: { "Content-Type": "application/json" },
-            }
-          );
-        }
-
-        const size = stat.size;
-        const range = req.headers.get("range");
-        const type = entry.mimeType || file.type || "application/octet-stream";
-        const isVideo = /^video\//i.test(type);
-
-        // For video: require Range and stream only the requested chunk
-        if (isVideo) {
-          if (!range || !/^bytes=/.test(range)) {
-            return new Response(
-              JSON.stringify({
-                error: "Range header required for video streaming",
-              }),
-              {
-                status: 400,
-                headers: {
-                  "Content-Type": "application/json",
-                  "Accept-Ranges": "bytes",
-                },
-              }
-            );
-          }
-          const [startStr, endStr] = range.replace(/bytes=/i, "").split("-");
-          let start = parseInt(startStr, 10);
-          let end = endStr
-            ? parseInt(endStr, 10)
-            : Math.min(start + 1_000_000, size - 1); // ~1MB chunks by default
-          if (Number.isNaN(start) || start < 0) start = 0;
-          if (Number.isNaN(end) || end >= size) end = size - 1;
-          if (start > end) return new Response(null, { status: 416 });
-          const chunkSize = end - start + 1;
-          const stream = fs.createReadStream(entry.path, { start, end });
-          return new Response(stream as any, {
-            status: 206,
-            headers: {
-              "Content-Type": type,
-              "Content-Length": String(chunkSize),
-              "Content-Range": `bytes ${start}-${end}/${size}`,
-              "Accept-Ranges": "bytes",
-            },
-          });
-        }
-
-        // Non-video: support range using Bun.file slices; otherwise send whole file inline
-        if (range && /^bytes=/.test(range)) {
-          const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
-          let start = parseInt(startStr, 10);
-          let end = endStr ? parseInt(endStr, 10) : size - 1;
-          if (Number.isNaN(start)) start = 0;
-          if (Number.isNaN(end) || end >= size) end = size - 1;
-          if (start > end) return new Response(null, { status: 416 });
-          const chunk = file.slice(start, end + 1);
-          return new Response(chunk, {
-            status: 206,
-            headers: {
-              "Content-Type": type,
-              "Content-Length": String(end - start + 1),
-              "Content-Range": `bytes ${start}-${end}/${size}`,
-              "Accept-Ranges": "bytes",
-            },
-          });
-        }
-
-        return new Response(file, {
-          headers: {
-            "Content-Type": type,
-            "Content-Length": String(size),
-            "Accept-Ranges": "bytes",
-            "Content-Disposition": "inline",
-          },
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({ error: String(err) }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    },
+    "/api/metadata": requestApiMetadata,
+    "/api/download": requestApiSimpleDownload,
+    "/api/preview": requestApiPreview,
     "/api/updateEntry": async (req) => {
       try {
         const body = await req.json().catch(() => null);
@@ -482,41 +322,7 @@ let server = serve({
         });
       }
     },
-    "/api/search": async (req) => {
-      try {
-        const url = new URL(req.url);
-        const q = url.searchParams.get("q") || "";
-        const limit = Math.min(
-          200,
-          Math.max(1, Number(url.searchParams.get("limit") || 50))
-        );
-        const typeParam = url.searchParams.get("type") as
-          | "file"
-          | "folder"
-          | "link"
-          | null;
-        const type =
-          typeParam === "file" || typeParam === "folder" || typeParam === "link"
-            ? typeParam
-            : undefined;
-        const results = walker.db
-          .searchEntries(q, { type, limit })
-          .map((e) => ({
-            ...e,
-            fullPath: e.path,
-            isPasswordProtected:
-              e.type === "file" ? walker.db.hasFilePassword(e.id) : false,
-          }));
-        return new Response(JSON.stringify(results), {
-          headers: { "Content-Type": "application/json" },
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({ error: String(err) }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    },
+    "/api/search": requestApiSearch,
     "/api/tags": async (req) => {
       try {
         const url = new URL(req.url);
@@ -897,3 +703,5 @@ async function listZipEntries(
     await fd.close();
   }
 }
+
+logger.info("Yeap, server running", { url: String(server.url) });

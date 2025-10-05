@@ -3,16 +3,53 @@ import * as fs from "fs";
 import * as path from "path";
 import FileDatabase, { type EntryType, type Entry } from "./fileDatabase";
 import AutoTagger from "./autotag";
+import type { AppConfig } from "./config";
+
+function isShouldBeIgnored(
+  entryPath: string,
+  entryName: string,
+  config: AppConfig | null
+): boolean {
+  if (!config?.walkerOptions?.ignoreNames) return false;
+  for (const ignored of config.walkerOptions.ignoreNames) {
+    if (config.walkerOptions.ignorePolicy === "fullPath") {
+      if (entryPath.includes(ignored)) {
+        logger.info(`Ignoring ${entryPath} due to ignore policy (fullPath)`, {
+          path: entryPath,
+          ignored,
+          ignorePolicy: config.walkerOptions.ignorePolicy,
+        });
+        return true;
+      }
+    } else if (config.walkerOptions.ignorePolicy === "substring") {
+      if (entryName.includes(ignored)) {
+        logger.info(`Ignoring ${entryName} due to ignore policy (substring)`, {
+          path: entryName,
+          ignored,
+          ignorePolicy: config.walkerOptions.ignorePolicy,
+        });
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 export default class Walker {
   parentPath: string = "";
   db: FileDatabase;
   autoTagger: AutoTagger;
+  applicationConfig: AppConfig | null = null;
 
-  constructor(db?: FileDatabase) {
-    this.db = db ?? new FileDatabase(".index/walk.db");
+  constructor(db?: FileDatabase, applicationConfig: AppConfig | null = null) {
+    this.db =
+      db ??
+      new FileDatabase(
+        applicationConfig?.walkerOptions?.dbPath || ".index/walk.db"
+      );
     this.autoTagger = new AutoTagger();
     this.autoTagger.loadDefault();
+    this.applicationConfig = applicationConfig;
   }
 
   init(path = "") {
@@ -39,6 +76,7 @@ export default class Walker {
       created: stat.birthtime?.toISOString?.() ?? null,
       lastModified: stat.mtime?.toISOString?.() ?? null,
     };
+
     const dirEntry = {
       id: dirId,
       type: "folder" as EntryType,
@@ -54,6 +92,10 @@ export default class Walker {
     let folderSize = 0;
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
+      if (isShouldBeIgnored(dirPath, entry.name, this.applicationConfig)) {
+        continue;
+      }
+
       const fullPath = path.join(dirPath, entry.name);
       let entryType: EntryType;
       let size: number | null = null;
@@ -151,11 +193,15 @@ export default class Walker {
           // New entry: apply auto-tags once (non-destructive; user edits are preserved later)
           let tags: string[] | null = null;
           try {
-            tags = this.autoTagger.tagsFor(entry.path, (entry as any).mimeType ?? null);
+            tags = this.autoTagger.tagsFor(
+              entry.path,
+              (entry as any).mimeType ?? null
+            );
           } catch {}
-          const createInput = (tags && tags.length > 0)
-            ? { ...(entry as any), tags }
-            : (entry as any);
+          const createInput =
+            tags && tags.length > 0
+              ? { ...(entry as any), tags }
+              : (entry as any);
           this.db.createEntry(createInput);
           logger.info(`Created Entry in DB:`, entry);
         }
@@ -180,7 +226,11 @@ export default class Walker {
         }
       }
       if (removed > 0) {
-        logger.info(`Cleanup complete. Removed ${removed} stale entr${removed === 1 ? 'y' : 'ies'}.`);
+        logger.info(
+          `Cleanup complete. Removed ${removed} stale entr${
+            removed === 1 ? "y" : "ies"
+          }.`
+        );
       }
     } catch (err) {
       logger.error(`Cleanup failed: ${err}`);
