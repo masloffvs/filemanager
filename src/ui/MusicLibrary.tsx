@@ -69,7 +69,7 @@ const AudioPlayer: React.FC<{
 
   useEffect(() => {
     if (currentTrack && audioRef.current) {
-      audioRef.current.src = `/api/download?id=${currentTrack.id}`;
+      audioRef.current.src = `/api/music/stream?id=${currentTrack.id}`;
       audioRef.current.load();
     }
   }, [currentTrack]);

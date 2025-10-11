@@ -400,7 +400,7 @@ export default class Walker {
           if (changed) {
             const payload = { ...existing, ...incoming, id: existing.id };
             this.db.updateEntry(payload as Entry);
-            logger.info(`Updated Entry in DB:`, payload);
+            //logger.info(`Updated Entry in DB:`, payload);
           }
         } else {
           // New entry: apply auto-tags once (non-destructive; user edits are preserved later)

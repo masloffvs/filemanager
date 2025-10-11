@@ -20,6 +20,7 @@ import { requestApiMediaSlice } from "./api/api_mediaSlice";
 import { requestApiGetMedia } from "./api/api_getMedia";
 import { requestApiGetMediaFrames } from "./api/api_getMediaFrames";
 import requestApiMediaStream from "./api/api_streamMedia";
+import requestApiAudioStream from "./api/api_streamAudio";
 import {
   requestApiMusicAlbums,
   requestApiMusicArtists,
@@ -163,6 +164,7 @@ server = serve({
     "/api/media/stream": requestApiMediaStream,
 
     // Music API endpoints
+    "/api/music/stream": requestApiAudioStream,
     "/api/music/albums": requestApiMusicAlbums,
     "/api/music/artists": requestApiMusicArtists,
     "/api/music/genres": requestApiMusicGenres,
