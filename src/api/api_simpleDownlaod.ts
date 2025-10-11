@@ -1,5 +1,6 @@
 import { walker } from "../index";
 import fs from "fs";
+import path from "path";
 
 export async function requestApiSimpleDownload(
   req: Request
@@ -38,11 +39,15 @@ export async function requestApiSimpleDownload(
     return new Response("File (at disk) not found", { status: 404 });
   }
 
-  const fileName = fileStream.name || "download";
+  // Extract just the filename from the path and encode properly for Content-Disposition
+  const fileName = (path.basename(entry.path) || "download")
+    .replace(/"/g, "'")
+    .replace(/\s+/g, "_")
+    .trim();
 
   return new Response(fileStream, {
     headers: {
-      "Content-Disposition": `attachment; filename="${fileName}"`,
+      "Content-Disposition": `attachment; filename="${fileName}";`,
       "Content-Type": entry.mimeType || "application/octet-stream",
       //   "Content-Length": entry.size?.toString() || undefined,
       "X-Content-Type-Options": "nosniff",
