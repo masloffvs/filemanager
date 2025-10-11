@@ -15,10 +15,20 @@ import { requestApiSimpleDownload } from "./api/api_simpleDownlaod";
 import { requestApiPreview } from "./api/api_preview";
 import { requestApiSearch } from "./api/api_search";
 import MediaIndex from "./mediaIndex";
+import MusicIndex from "./musicIndex";
 import { requestApiMediaSlice } from "./api/api_mediaSlice";
 import { requestApiGetMedia } from "./api/api_getMedia";
 import { requestApiGetMediaFrames } from "./api/api_getMediaFrames";
 import requestApiMediaStream from "./api/api_streamMedia";
+import {
+  requestApiMusicAlbums,
+  requestApiMusicArtists,
+  requestApiMusicGenres,
+  requestApiMusicAlbumTracks,
+  requestApiMusicArtistAlbums,
+  requestApiMusicSearch,
+  requestApiMusicTrack,
+} from "./api/api_music";
 import BackgroundWorker from "./utils/bgWorker";
 import * as grefresh from "./utils/grefresh";
 
@@ -32,6 +42,7 @@ grefresh.entrypoint();
 
 export const walker = new Walker(undefined, c0);
 export const mediaIndex = new MediaIndex(walker, c0);
+export const musicIndex = new MusicIndex(walker, c0);
 
 // Main async entrypoint
 await walker.init(c0.indexRootPath);
@@ -56,6 +67,19 @@ const mediaIndexWorker = new BackgroundWorker("mediaIndex", async (ping) => {
       await mediaIndex.entrypoint();
     } catch (err) {
       logger.error("MediaIndex error", { err: String(err) });
+    }
+    ping();
+
+    await new Promise((res) => setTimeout(res, 5000));
+  }
+});
+
+const musicIndexWorker = new BackgroundWorker("musicIndex", async (ping) => {
+  while (true) {
+    try {
+      await musicIndex.entrypoint();
+    } catch (err) {
+      logger.error("MusicIndex error", { err: String(err) });
     }
     ping();
 
@@ -135,6 +159,15 @@ server = serve({
     "/api/media/slice": requestApiMediaSlice,
     "/api/media/get": requestApiGetMedia,
     "/api/media/stream": requestApiMediaStream,
+
+    // Music API endpoints
+    "/api/music/albums": requestApiMusicAlbums,
+    "/api/music/artists": requestApiMusicArtists,
+    "/api/music/genres": requestApiMusicGenres,
+    "/api/music/album/tracks": requestApiMusicAlbumTracks,
+    "/api/music/artist/albums": requestApiMusicArtistAlbums,
+    "/api/music/search": requestApiMusicSearch,
+    "/api/music/track": requestApiMusicTrack,
 
     "/api/getSliceByIdOrPath": async (req) => {
       try {
