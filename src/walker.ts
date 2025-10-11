@@ -131,22 +131,103 @@ export default class Walker {
         };
         yield fileEntry;
       } else if (entry.isSymbolicLink()) {
-        entryType = "link";
-        const stat = await fs.promises.lstat(fullPath);
-        fileMeta = {
-          created: stat.birthtime?.toISOString?.() ?? null,
-          lastModified: stat.mtime?.toISOString?.() ?? null,
-        };
-        const linkEntry = {
-          id: this.db["idGenerator"](),
-          type: entryType,
-          path: path.resolve(fullPath),
-          size: null,
-          mimeType: null,
-          meta: fileMeta,
-          parentId: dirId,
-        };
-        yield linkEntry;
+        try {
+          // Try to resolve the symlink and check what it points to
+          const resolvedPath = await fs.promises.realpath(fullPath);
+          const resolvedStat = await fs.promises.stat(resolvedPath);
+
+          if (resolvedStat.isDirectory()) {
+            // Symlink points to a directory - treat it as a phantom folder
+            logger.info(
+              `Processing symlink to directory: ${fullPath} -> ${resolvedPath}`
+            );
+
+            // Create phantom folder entry for the symlink itself
+            const symlinkStat = await fs.promises.lstat(fullPath);
+            const symlinkMeta = {
+              created: symlinkStat.birthtime?.toISOString?.() ?? null,
+              lastModified: symlinkStat.mtime?.toISOString?.() ?? null,
+              symlinkTarget: resolvedPath, // Store the target path in meta
+            };
+
+            let symlinkDirId: string;
+            const existingSymlinkEntry = this.db.getEntryByPath(
+              path.resolve(fullPath)
+            );
+            if (existingSymlinkEntry) {
+              symlinkDirId = existingSymlinkEntry.id;
+            } else {
+              symlinkDirId = this.db["idGenerator"]();
+            }
+
+            const phantomFolderEntry = {
+              id: symlinkDirId,
+              type: "folder" as EntryType,
+              path: path.resolve(fullPath),
+              size: null,
+              mimeType: null,
+              meta: symlinkMeta,
+              parentId: dirId,
+              isPhantomSymlink: true, // Mark as phantom symlink folder
+            };
+            yield phantomFolderEntry;
+
+            // Now recursively index the contents of the symlink target
+            // but using the symlink path as the virtual path
+            const subSize = yield* this.walkSymlinkContents(
+              resolvedPath,
+              fullPath,
+              symlinkDirId
+            );
+            folderSize += subSize;
+
+            // Update the phantom folder with calculated size
+            const updatedPhantomEntry = {
+              ...phantomFolderEntry,
+              size: subSize,
+            };
+            yield updatedPhantomEntry;
+          } else {
+            // Symlink points to a file - treat as regular symlink
+            entryType = "link";
+            const stat = await fs.promises.lstat(fullPath);
+            fileMeta = {
+              created: stat.birthtime?.toISOString?.() ?? null,
+              lastModified: stat.mtime?.toISOString?.() ?? null,
+              symlinkTarget: resolvedPath,
+            };
+            const linkEntry = {
+              id: this.db["idGenerator"](),
+              type: entryType,
+              path: path.resolve(fullPath),
+              size: null,
+              mimeType: null,
+              meta: fileMeta,
+              parentId: dirId,
+            };
+            yield linkEntry;
+          }
+        } catch (err) {
+          // Broken symlink or permission error - treat as regular link
+          logger.warn(`Failed to resolve symlink ${fullPath}: ${err}`);
+          entryType = "link";
+          const stat = await fs.promises.lstat(fullPath);
+          fileMeta = {
+            created: stat.birthtime?.toISOString?.() ?? null,
+            lastModified: stat.mtime?.toISOString?.() ?? null,
+            broken: true,
+          };
+          const linkEntry = {
+            id: this.db["idGenerator"](),
+            type: entryType,
+            path: path.resolve(fullPath),
+            size: null,
+            mimeType: null,
+            meta: fileMeta,
+            parentId: dirId,
+          };
+          yield linkEntry;
+        }
       }
     }
 
@@ -159,6 +240,137 @@ export default class Walker {
 
     // Return this folder's total size to the caller
     return folderSize;
+  }
+
+  async *walkSymlinkContents(
+    realPath: string,
+    virtualPath: string,
+    parentId: string
+  ): AsyncGenerator<any, number, void> {
+    // Walk the real path but use virtual paths for DB entries
+    let totalSize = 0;
+
+    try {
+      const entries = await fs.promises.readdir(realPath, {
+        withFileTypes: true,
+      });
+
+      for (const entry of entries) {
+        if (isShouldBeIgnored(realPath, entry.name, this.applicationConfig)) {
+          continue;
+        }
+
+        const realFullPath = path.join(realPath, entry.name);
+        const virtualFullPath = path.join(virtualPath, entry.name);
+
+        if (entry.isDirectory()) {
+          // Create virtual directory entry
+          const stat = await fs.promises.stat(realFullPath);
+          const meta = {
+            created: stat.birthtime?.toISOString?.() ?? null,
+            lastModified: stat.mtime?.toISOString?.() ?? null,
+            realPath: realFullPath, // Store real path in meta
+          };
+
+          let dirId: string;
+          const existingDir = this.db.getEntryByPath(
+            path.resolve(virtualFullPath)
+          );
+          if (existingDir) {
+            dirId = existingDir.id;
+          } else {
+            dirId = this.db["idGenerator"]();
+          }
+
+          const dirEntry = {
+            id: dirId,
+            type: "folder" as EntryType,
+            path: path.resolve(virtualFullPath),
+            size: null,
+            mimeType: null,
+            meta,
+            parentId,
+            isPhantomSymlink: true, // Mark as phantom since it's from symlink
+          };
+          yield dirEntry;
+
+          // Recursively walk subdirectory
+          const subSize = yield* this.walkSymlinkContents(
+            realFullPath,
+            virtualFullPath,
+            dirId
+          );
+          totalSize += subSize;
+
+          // Update directory with calculated size
+          const updatedDirEntry = {
+            ...dirEntry,
+            size: subSize,
+          };
+          yield updatedDirEntry;
+        } else if (entry.isFile()) {
+          // Create virtual file entry
+          const stat = await fs.promises.stat(realFullPath);
+          let mimeType: string | null = null;
+          try {
+            mimeType = Bun.file(realFullPath).type || null;
+          } catch {
+            mimeType = null;
+          }
+
+          const fileMeta = {
+            created: stat.birthtime?.toISOString?.() ?? null,
+            lastModified: stat.mtime?.toISOString?.() ?? null,
+            realPath: realFullPath, // Store real path in meta
+          };
+
+          const fileEntry = {
+            id: this.db["idGenerator"](),
+            type: "file" as EntryType,
+            path: path.resolve(virtualFullPath),
+            size: stat.size,
+            mimeType,
+            meta: fileMeta,
+            parentId,
+            isPhantomSymlink: true, // Mark as phantom since it's from symlink
+          };
+          yield fileEntry;
+          totalSize += stat.size ?? 0;
+        } else if (entry.isSymbolicLink()) {
+          // Handle nested symlinks - for now treat as regular links
+          try {
+            const nestedTarget = await fs.promises.realpath(realFullPath);
+            const stat = await fs.promises.lstat(realFullPath);
+            const linkMeta = {
+              created: stat.birthtime?.toISOString?.() ?? null,
+              lastModified: stat.mtime?.toISOString?.() ?? null,
+              symlinkTarget: nestedTarget,
+              realPath: realFullPath,
+            };
+
+            const linkEntry = {
+              id: this.db["idGenerator"](),
+              type: "link" as EntryType,
+              path: path.resolve(virtualFullPath),
+              size: null,
+              mimeType: null,
+              meta: linkMeta,
+              parentId,
+              isPhantomSymlink: true,
+            };
+            yield linkEntry;
+          } catch (err) {
+            logger.warn(
+              `Failed to resolve nested symlink ${realFullPath}: ${err}`
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.error(`Failed to read symlink contents ${realPath}: ${err}`);
+    }
+
+    return totalSize;
   }
 
   async entrypoint() {
@@ -183,7 +395,8 @@ export default class Walker {
             existing.size !== incoming.size ||
             existing.mimeType !== incoming.mimeType ||
             JSON.stringify(existing.meta) !== JSON.stringify(incoming.meta) ||
-            existing.parentId !== incoming.parentId;
+            existing.parentId !== incoming.parentId ||
+            existing.isPhantomSymlink !== (incoming.isPhantomSymlink ?? false);
           if (changed) {
             const payload = { ...existing, ...incoming, id: existing.id };
             this.db.updateEntry(payload as Entry);

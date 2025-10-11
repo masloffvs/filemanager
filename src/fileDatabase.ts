@@ -14,6 +14,7 @@ export interface CreateEntry {
   tags?: string[] | null; // nullable array of tags
   meta?: unknown; // optional arbitrary JSON
   parentId?: string | null; // optional parent entry id
+  isPhantomSymlink?: boolean; // true if this is a phantom folder from a symlink
 }
 
 export interface Entry extends Required<Pick<CreateEntry, "type" | "path">> {
@@ -24,6 +25,7 @@ export interface Entry extends Required<Pick<CreateEntry, "type" | "path">> {
   tags: string[] | null;
   meta: unknown | null;
   parentId: string | null;
+  isPhantomSymlink: boolean | null;
 }
 
 function isWindowsAbsolute(p: string): boolean {
@@ -45,6 +47,7 @@ function toRow(entry: Entry) {
     tags: entry.tags == null ? null : JSON.stringify(entry.tags),
     meta: entry.meta == null ? null : JSON.stringify(entry.meta),
     parent_id: entry.parentId ?? null,
+    is_phantom_symlink: entry.isPhantomSymlink ? 1 : 0,
   } as const;
 }
 
@@ -59,6 +62,7 @@ function fromRow(row: any): Entry {
     tags: row.tags == null ? null : (safeJsonParse(row.tags) as string[]),
     meta: row.meta == null ? null : safeJsonParse(row.meta),
     parentId: row.parent_id ?? null,
+    isPhantomSymlink: row.is_phantom_symlink === 1 ? true : false,
   };
 }
 
@@ -105,7 +109,8 @@ export class FileDatabase {
         comment TEXT NULL,
         tags TEXT NULL,
         meta TEXT NULL,
-        parent_id TEXT NULL REFERENCES entries(id) ON DELETE CASCADE
+        parent_id TEXT NULL REFERENCES entries(id) ON DELETE CASCADE,
+        is_phantom_symlink INTEGER NOT NULL DEFAULT 0 CHECK (is_phantom_symlink IN (0, 1))
       );
       CREATE INDEX IF NOT EXISTS idx_entries_parent ON entries(parent_id);
       CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);
@@ -125,6 +130,14 @@ export class FileDatabase {
       const hasTags = cols.some((c) => c.name === "tags");
       if (!hasTags) {
         this.db.exec("ALTER TABLE entries ADD COLUMN tags TEXT NULL");
+      }
+      const hasPhantomSymlink = cols.some(
+        (c) => c.name === "is_phantom_symlink"
+      );
+      if (!hasPhantomSymlink) {
+        this.db.exec(
+          "ALTER TABLE entries ADD COLUMN is_phantom_symlink INTEGER NOT NULL DEFAULT 0 CHECK (is_phantom_symlink IN (0, 1))"
+        );
       }
     } catch (e) {
       // Ignore migration errors; table might already be up-to-date
@@ -173,11 +186,12 @@ export class FileDatabase {
       tags: input.tags ?? null,
       meta: input.meta ?? null,
       parentId: input.parentId ?? null,
+      isPhantomSymlink: input.isPhantomSymlink ?? false,
     };
 
     const stmt = this.db.query(`
-      INSERT INTO entries (id, type, path, size, mime_type, comment, tags, meta, parent_id)
-      VALUES ($id, $type, $path, $size, $mime_type, $comment, $tags, $meta, $parent_id)
+      INSERT INTO entries (id, type, path, size, mime_type, comment, tags, meta, parent_id, is_phantom_symlink)
+      VALUES ($id, $type, $path, $size, $mime_type, $comment, $tags, $meta, $parent_id, $is_phantom_symlink)
     `);
 
     try {
@@ -240,7 +254,8 @@ export class FileDatabase {
              comment = $comment,
              tags = $tags,
              meta = $meta,
-             parent_id = $parent_id
+             parent_id = $parent_id,
+             is_phantom_symlink = $is_phantom_symlink
        WHERE id = $id
     `);
     const info = stmt.run(toRow(entry)) as unknown as { changes: number };
