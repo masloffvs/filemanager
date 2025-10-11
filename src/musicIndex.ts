@@ -299,14 +299,14 @@ export default class MusicIndex {
         continue;
       }
 
-      const { valid, md5 } = await isAudioFileValid(file);
+      const { valid, md5 } = await isAudioFileValid(file, this.walkerDb.db);
       if (!valid) {
         if (md5) await this.markFileAsCorrupted(md5);
         logger.warn("Skipping corrupted audio file:", { path: file.path, md5 });
         continue;
       }
 
-      const audioMeta = await extractAudioMetadata(file);
+      const audioMeta = await extractAudioMetadata(file, this.walkerDb.db);
 
       yield {
         ...file,

@@ -1,5 +1,6 @@
 import { logger } from "../../logger";
 import type { Entry } from "../../fileDatabase";
+import type FileDatabase from "../../fileDatabase";
 import * as mm from "music-metadata";
 import * as fs from "fs";
 import * as crypto from "crypto";
@@ -28,7 +29,8 @@ export interface AudioMetadata {
 }
 
 export async function isAudioFileValid(
-  file: Entry
+  file: Entry,
+  walkerDb?: FileDatabase
 ): Promise<{ valid: boolean; md5?: string }> {
   try {
     // Only allow mp3 or flac files
@@ -42,17 +44,20 @@ export async function isAudioFileValid(
       return { valid: false };
     }
 
+    // Get the real file path (handles phantom symlink files)
+    const realPath = walkerDb ? walkerDb.getRealPath(file) : file.path;
+
     // Check if file exists and is readable
-    if (!fs.existsSync(file.path)) {
+    if (!fs.existsSync(realPath)) {
       return { valid: false };
     }
 
     // Calculate MD5 hash for corruption detection
-    const fileBuffer = await fs.promises.readFile(file.path);
+    const fileBuffer = await fs.promises.readFile(realPath);
     const md5 = crypto.createHash("md5").update(fileBuffer).digest("hex");
 
     // Try to parse basic metadata to validate file integrity
-    const metadata = await mm.parseFile(file.path);
+    const metadata = await mm.parseFile(realPath);
 
     // File is valid if we can extract basic info
     const valid = !!(metadata.format || metadata.common);
@@ -65,10 +70,13 @@ export async function isAudioFileValid(
 }
 
 export async function extractAudioMetadata(
-  file: Entry
+  file: Entry,
+  walkerDb?: FileDatabase
 ): Promise<AudioMetadata> {
   try {
-    const metadata = await mm.parseFile(file.path);
+    // Get the real file path (handles phantom symlink files)
+    const realPath = walkerDb ? walkerDb.getRealPath(file) : file.path;
+    const metadata = await mm.parseFile(realPath);
 
     const audioMeta: AudioMetadata = {
       title: metadata.common.title || extractTitleFromFilename(file.path),
