@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { humanDuration } from "./types";
+import { humanDuration } from "../utils/humansize";
 
 interface AudioTrack {
   id: string;
@@ -102,7 +102,9 @@ export default function MusicLibrary() {
     setLoading(true);
     try {
       const response = await fetch(
-        `/api/music/album/tracks?album=${encodeURIComponent(album.name)}&artist=${encodeURIComponent(album.artist)}`
+        `/api/music/album/tracks?album=${encodeURIComponent(
+          album.name
+        )}&artist=${encodeURIComponent(album.artist)}`
       );
       const data = await response.json();
       setAlbumTracks(data.tracks || []);
@@ -115,7 +117,7 @@ export default function MusicLibrary() {
   };
 
   const playTrack = (track: AudioTrack) => {
-    window.open(`/api/download?id=${track.id}`, '_blank');
+    window.open(`/api/download?id=${track.id}`, "_blank");
   };
 
   // Filter and sort data
@@ -337,7 +339,7 @@ export default function MusicLibrary() {
           ← Back to Albums
         </button>
       </div>
-      
+
       {selectedAlbum && (
         <div className="mb-6 flex items-start space-x-4">
           {selectedAlbum.coverArt ? (
@@ -359,7 +361,9 @@ export default function MusicLibrary() {
             </div>
           )}
           <div>
-            <h2 className="text-xl font-bold mb-2 text-gray-900 dark:text-gray-100">{selectedAlbum.name}</h2>
+            <h2 className="text-xl font-bold mb-2 text-gray-900 dark:text-gray-100">
+              {selectedAlbum.name}
+            </h2>
             <p className="text-lg text-gray-600 dark:text-gray-400 mb-1">
               {selectedAlbum.artist}
             </p>
@@ -376,7 +380,7 @@ export default function MusicLibrary() {
           </div>
         </div>
       )}
-      
+
       <div className="space-y-1">
         {albumTracks.map((track, index) => (
           <div
@@ -437,11 +441,13 @@ export default function MusicLibrary() {
                   <path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.238a1 1 0 0 0 0 1.962l1.192.238a1 1 0 0 1 .785.785l.238 1.192a1 1 0 0 0 1.962 0l.238-1.192a1 1 0 0 1 .785-.785l1.192-.238a1 1 0 0 0 0-1.962l-1.192-.238a1 1 0 0 1-.785-.785l-.238-1.192Z" />
                 </svg>
                 <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 capitalize">
-                  {viewMode} ({
-                    viewMode === "albums" ? filteredAlbums.length :
-                    viewMode === "artists" ? filteredArtists.length :
-                    genres.length
-                  })
+                  {viewMode} (
+                  {viewMode === "albums"
+                    ? filteredAlbums.length
+                    : viewMode === "artists"
+                    ? filteredArtists.length
+                    : genres.length}
+                  )
                 </h2>
               </div>
 
@@ -476,33 +482,33 @@ export default function MusicLibrary() {
             )}
 
             {/* Empty state */}
-            {!loading && (
-              (viewMode === "albums" && filteredAlbums.length === 0) ||
-              (viewMode === "artists" && filteredArtists.length === 0) ||
-              (viewMode === "genres" && genres.length === 0)
-            ) && (
-              <div className="text-center py-12">
-                <svg
-                  className="w-8 h-8 text-gray-400 mx-auto mb-2"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
-                  />
-                </svg>
-                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
-                  No music found
-                </h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Try adjusting your search or check if music files have been indexed
-                </p>
-              </div>
-            )}
+            {!loading &&
+              ((viewMode === "albums" && filteredAlbums.length === 0) ||
+                (viewMode === "artists" && filteredArtists.length === 0) ||
+                (viewMode === "genres" && genres.length === 0)) && (
+                <div className="text-center py-12">
+                  <svg
+                    className="w-8 h-8 text-gray-400 mx-auto mb-2"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                    />
+                  </svg>
+                  <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
+                    No music found
+                  </h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Try adjusting your search or check if music files have been
+                    indexed
+                  </p>
+                </div>
+              )}
           </div>
         )}
       </div>
@@ -521,7 +527,10 @@ export default function MusicLibrary() {
                 type="text"
                 value={filters.searchQuery}
                 onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, searchQuery: e.target.value }))
+                  setFilters((prev) => ({
+                    ...prev,
+                    searchQuery: e.target.value,
+                  }))
                 }
                 placeholder="Search music..."
                 className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-dark-400 rounded bg-white dark:bg-dark-700 text-gray-900 dark:text-gray-100 placeholder-gray-400"
@@ -585,9 +594,11 @@ export default function MusicLibrary() {
                 <div className="flex justify-between">
                   <span>Items:</span>
                   <span>
-                    {viewMode === "albums" ? filteredAlbums.length :
-                     viewMode === "artists" ? filteredArtists.length :
-                     genres.length}
+                    {viewMode === "albums"
+                      ? filteredAlbums.length
+                      : viewMode === "artists"
+                      ? filteredArtists.length
+                      : genres.length}
                   </span>
                 </div>
               </div>
