@@ -31,6 +31,13 @@ export async function isAudioFileValid(
   file: Entry
 ): Promise<{ valid: boolean; md5?: string }> {
   try {
+    // Only allow mp3 or flac files
+    const allowedExtensions = [".mp3", ".flac"];
+    const ext = file.path.slice(file.path.lastIndexOf(".")).toLowerCase();
+    if (!allowedExtensions.includes(ext)) {
+      return { valid: false };
+    }
+
     if (!file.mimeType?.startsWith("audio/")) {
       return { valid: false };
     }
