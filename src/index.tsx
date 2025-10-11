@@ -100,7 +100,11 @@ let server = serve({
   hostname: String(c0.serverHost || "127.0.0.1"),
 });
 
-Promise.all([walkerWorker.start(), mediaIndexWorker.start()]);
+Promise.all([
+  walkerWorker.start(),
+  mediaIndexWorker.start(),
+  musicIndexWorker.start(),
+]);
 
 server.stop();
 server = serve({
