@@ -148,6 +148,21 @@ export class FileDatabase {
     this.db.close();
   }
 
+  /** Get the real file path for reading. For phantom symlink entries, returns the real path. */
+  getRealPath(entry: Entry): string {
+    if (
+      entry.isPhantomSymlink &&
+      entry.meta &&
+      typeof entry.meta === "object"
+    ) {
+      const meta = entry.meta as any;
+      if (meta.realPath && typeof meta.realPath === "string") {
+        return meta.realPath;
+      }
+    }
+    return entry.path;
+  }
+
   /** Create a new entry and return it. */
   createEntry(input: CreateEntry & { id?: string }): Entry {
     if (!input || typeof input !== "object") {

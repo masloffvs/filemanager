@@ -46,7 +46,10 @@ export async function requestApiPreview(req: Request) {
       });
     }
 
-    if (!fs.existsSync(entry.path)) {
+    // Get the real path for reading (handles phantom symlink files)
+    const realPath = walker.db.getRealPath(entry);
+
+    if (!fs.existsSync(realPath)) {
       return new Response(JSON.stringify({ error: "File not found" }), {
         status: 404,
         headers: { "Content-Type": "application/json" },
@@ -79,7 +82,9 @@ export async function requestApiPreview(req: Request) {
     });
   }
 
-  const file = Bun.file(entry.path);
+  // Get the real path for reading (handles phantom symlink files)
+  const realPath = walker.db.getRealPath(entry);
+  const file = Bun.file(realPath);
 
   // if is audio
   if (entry.mimeType && entry.mimeType.startsWith("audio/")) {

@@ -30,9 +30,11 @@ export async function requestApiSimpleDownload(
     }
   }
 
-  const fileStream = Bun.file(entry.path);
+  // Get the real path for reading (handles phantom symlink files)
+  const realPath = walker.db.getRealPath(entry);
+  const fileStream = Bun.file(realPath);
 
-  if (!fs.existsSync(entry.path)) {
+  if (!fs.existsSync(realPath)) {
     return new Response("File (at disk) not found", { status: 404 });
   }
 

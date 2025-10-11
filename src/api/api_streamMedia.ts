@@ -59,7 +59,10 @@ export default async function requestApiMediaStream(req: Request) {
       });
     }
 
-    if (!fs.existsSync(entry.path)) {
+    // Get the real path for reading (handles phantom symlink files)
+    const realPath = walker.db.getRealPath(entry);
+
+    if (!fs.existsSync(realPath)) {
       return new Response(JSON.stringify({ error: "File not found" }), {
         status: 404,
         headers: { "Content-Type": "application/json" },
@@ -147,14 +150,17 @@ export default async function requestApiMediaStream(req: Request) {
     });
   }
 
-  if (!fs.existsSync(entry.path)) {
+  // Get the real path for reading (handles phantom symlink files)
+  const realPath = walker.db.getRealPath(entry);
+
+  if (!fs.existsSync(realPath)) {
     return new Response(JSON.stringify({ error: "File not found" }), {
       status: 404,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  let file = Bun.file(entry.path);
+  let file = Bun.file(realPath);
 
   const [start, end] = byteRangeMatch.slice(1, 3).map(Number);
   file = file.slice(start, end || (start || 0) + 1);

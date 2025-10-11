@@ -23,7 +23,8 @@ export async function requestApiMetadata(req: Request): Promise<any> {
     });
   }
 
-  const filePath = entry.path;
+  // Get the real path for reading (handles phantom symlink files)
+  const filePath = walker.db.getRealPath(entry);
 
   if (!fs.existsSync(filePath)) {
     return new Response(JSON.stringify({ error: "File (at disk) not found" }), {
