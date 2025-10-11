@@ -478,6 +478,15 @@ export default class MusicIndex {
         const result = await this.insertAudioTrack(audioTrack);
         if (result) {
           tracksProcessed++;
+
+          // rebuild after 30 tracks
+          if (tracksProcessed % 30 === 0) {
+            logger.info(
+              `Recently indexed ${tracksProcessed} tracks... Rebuilding aggregated tables now.`
+            );
+            await this.rebuildAggregatedTables();
+          }
+
           logger.debug("Indexed audio track:", {
             path: audioTrack.path,
             title: audioTrack.title,
